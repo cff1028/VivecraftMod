@@ -200,6 +200,7 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
         if (!VRState.VR_INITIALIZED) {
             return;
         }
+        ClientDataHolderVR.getInstance().vr.handleEvents();
         boolean vrActive = !ClientDataHolderVR.getInstance().vrSettings.vrHotswitchingEnabled ||
             ClientDataHolderVR.getInstance().vr.isActive();
         if (VRState.VR_RUNNING != vrActive && (ClientNetworking.SERVER_ALLOWS_VR_SWITCHING || this.player == null)) {
@@ -271,6 +272,7 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
                 Profiler.get().push("setupRenderConfiguration");
                 GraphicsHelper.INSTANCE.checkError("pre render setup");
                 ClientDataHolderVR.getInstance().vrRenderer.setupRenderConfiguration();
+                ClientDataHolderVR.getInstance().vrRenderer.beginFrame();
                 GraphicsHelper.INSTANCE.checkError("post render setup");
             } catch (Exception e) {
                 // something went wrong, disable VR
@@ -320,6 +322,14 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
     {
         if (VRState.VR_RUNNING && !this.noRender) {
             VRPassHelper.renderAndSubmit(renderLevel, this.deltaTracker);
+        } else if (VRState.VR_RUNNING && ClientDataHolderVR.getInstance().vrRenderer instanceof
+            org.vivecraft.client_vr.provider.openxr.OpenXRStereoRenderer renderer)
+        {
+            try {
+                renderer.endFrame(false);
+            } catch (RenderConfigException e) {
+                VRSettings.LOGGER.error("Vivecraft: Failed to finish skipped OpenXR frame", e);
+            }
         }
     }
 

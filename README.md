@@ -1,28 +1,22 @@
-# Vivecraft Mod (of Vivecraft fabric)
-A port of [Vivecraft](https://www.vivecraft.org) to Fabric/Quilt and back to Forge/Neoforge.\
-This is an official continuation of the project, using mixin's instead of patches.\
-This means we could use a multiloader setup to develop on Fabric, Forge, Neoforge and Quilt at the same time.\
-It also removed Optifine as a dependency, so mod compatibility *should* be better as well.
+# Vivecraft OpenXR
 
-Curseforge: [![DOWNLOAD](https://cf.way2muchnoise.eu/title/667903.svg)](https://www.curseforge.com/minecraft/mc-mods/vivecraft)\
-Modrinth: [![Modrinth](https://img.shields.io/modrinth/dt/vivecraft)](https://modrinth.com/mod/vivecraft)
+将 QuestCraft 的 Quest 一体机 OpenXR 适配移植到 Vivecraft 1.3.15，面向 Minecraft 1.21.4 Fabric。
 
-Since this version no longer ships with Optifine, we recommend you use Sodium (and the rest of the family) on Fabric/Quilt/Neoforge (and the unofficial ports on Forge) to maximize performance. For shaders you can use Iris on Fabric/Quilt/Neoforge (and the unofficial ports on Forge).
-If you want, you can still use Optifine though. There is built in compatibility for it.
+- Quest OpenXR 会话、双眼渲染与视场角适配。
+- Touch 手柄输入、震动及手腕／手掌快捷栏选择。
 
-## Mod compatibility
-Mod compatibility is important to us. If you find any issues, don't be afraid to open an issue. Be sure to check if it isn't already known though, so we don't have duplicates.
+从 [Releases](https://github.com/cff1028/VivecraftMod/releases) 下载 Fabric JAR，放入游戏的 `mods` 目录，并移除其他 Vivecraft JAR。启动器需提供 Android OpenXR 与 `vloader`。
 
-## Current status
-- [x] Loaded in game
-- [x] Moving in game
-- [x] Playable (with some bugs and missing features)
-- [x] Fully playable
-- [x] Sodium support
-- [X] Iris support
-- [X] In game VR switching
-- [X] API, details [here](https://github.com/Vivecraft/VivecraftMod/wiki/Mod-API)
-- [ ] OpenXR support
+## 构建
 
-[Vivecraft Discord server](https://discord.gg/2x3QCk8qa9)\
-[Development Discord server](https://discord.gg/jYyyv7zhSW)
+使用 JDK 21，默认构建 Fabric：
+
+```sh
+./gradlew :fabric:remapJar
+```
+
+Windows 使用 `gradlew.bat :fabric:remapJar`。产物位于 `build/libs/`；`quest-libs/` 中包含所需的 QuestCraft OpenXR 依赖。
+
+## 来源
+
+基于 [Vivecraft 1.21.4-1.3.15](https://github.com/Vivecraft/VivecraftMod/tree/1.21.4-1.3.15)，OpenXR 适配来自 [QuestCraft](https://github.com/QuestCraftPlusPlus/VivecraftMod/tree/60ffc92889fed3d1a92127b1b66516dd2354bbeb)。许可证见 [LICENSE.md](LICENSE.md)。

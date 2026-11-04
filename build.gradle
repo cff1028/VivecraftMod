@@ -40,6 +40,8 @@ subprojects {
         implementation("org.lwjgl:lwjgl-openvr:${rootProject.lwjgl_version}:natives-macos") { transitive = false }
         implementation("org.lwjgl:lwjgl-openvr:${rootProject.lwjgl_version}:natives-windows") { transitive = false }
 
+        compileOnly("questcraft.local:lwjgl3-3.3.3-lwjgl-openxr:3.3.3") { transitive = false }
+
         // for OSC tracker support
         implementation("com.illposed.osc:javaosc-core:0.9")
 
@@ -48,10 +50,6 @@ subprojects {
 
         // for potential vulkan support
         compileOnly("org.lwjgl:lwjgl-vulkan:${rootProject.lwjgl_version}") { transitive = false }
-
-        // for running testing
-        testImplementation("org.junit.jupiter:junit-jupiter:5.7.1")
-        testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     }
 
     tasks.withType(JavaCompile).configureEach {
@@ -135,17 +133,6 @@ subprojects {
         options.locale("en_US")
         // also force en_us for the java runtime, because of a java bug
         options.jFlags("-Duser.country=US", "-Duser.language=en")
-    }
-
-    tasks.named('test', Test) {
-        useJUnitPlatform()
-
-        // always run tests
-        outputs.upToDateWhen { false }
-
-        testLogging {
-            events "passed"
-        }
     }
 
     // only do these for the api
@@ -248,6 +235,13 @@ allprojects {
     apply plugin: "architectury-plugin"
 
     repositories {
+        // Module coordinates prevent Shadow from unpacking the local binding.
+        exclusiveContent {
+            forRepository {
+                flatDir { dirs rootProject.file("quest-libs") }
+            }
+            filter { includeGroup "questcraft.local" }
+        }
         // Add repositories to retrieve artifacts from in here.
         // You should only use this when depending on other mods because
         // Loom adds the essential maven repositories to download Minecraft and libraries from automatically.

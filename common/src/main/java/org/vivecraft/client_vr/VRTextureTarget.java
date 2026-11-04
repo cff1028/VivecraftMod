@@ -1,9 +1,11 @@
 package org.vivecraft.client_vr;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import org.joml.Vector4f;
 import org.joml.Vector4fc;
+import org.lwjgl.opengl.GL30;
 import org.vivecraft.Xplat;
 import org.vivecraft.client.extensions.RenderTargetExtension;
 import org.vivecraft.client_vr.render.helpers.graphics.GraphicsHelper;
@@ -14,6 +16,9 @@ import org.vivecraft.client_vr.render.helpers.graphics.GraphicsHelper;
 public class VRTextureTarget extends RenderTarget {
 
     private final String name;
+
+    // Swapchain textures belong to OpenXR.
+    private boolean externalTexture;
 
     public boolean anisotropicFiltering;
 
@@ -43,6 +48,38 @@ public class VRTextureTarget extends RenderTarget {
             ((RenderTargetExtension) this).vivecraft$setStencil(true);
         }
         this.resize(width, height);
+    }
+
+    /** Wraps a swapchain layer without taking ownership of its texture. */
+    public VRTextureTarget(String name, int width, int height, int colorId, int layer) {
+        super(false);
+        this.name = name;
+        this.externalTexture = true;
+        RenderSystem.assertOnRenderThreadOrInit();
+        this.width = this.viewWidth = width;
+        this.height = this.viewHeight = height;
+        this.colorTextureId = colorId;
+        this.frameBufferId = GlStateManager.glGenFramebuffers();
+        try {
+            GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, this.frameBufferId);
+            GL30.glFramebufferTextureLayer(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, colorId, 0, layer);
+            this.checkStatus();
+        } catch (RuntimeException exception) {
+            this.destroyBuffers();
+            throw exception;
+        } finally {
+            GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
+        }
+        this.setClearColor(0F, 0F, 0F, 0F);
+    }
+
+    @Override
+    public void destroyBuffers() {
+        if (this.externalTexture) {
+            // Prevent RenderTarget from deleting the runtime texture.
+            this.colorTextureId = -1;
+        }
+        super.destroyBuffers();
     }
 
     @Override

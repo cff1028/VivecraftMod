@@ -74,10 +74,9 @@ public class VRPassHelper {
                 Profiler.get().pop();
             }
 
-            DATA_HOLDER.vrRenderer.framebufferEye[eye == RenderPass.LEFT ? 0 : 1].bindWrite(true);
-
             // do post-processing
-            ShaderHelper.doVrPostProcess(eye, rendertarget, deltaTracker.getGameTimeDeltaPartialTick(false));
+            DATA_HOLDER.vrRenderer.postProcessEye(eye, rendertarget,
+                deltaTracker.getGameTimeDeltaPartialTick(false));
 
             GraphicsHelper.INSTANCE.checkError("post overlay" + eye);
             Profiler.get().pop();

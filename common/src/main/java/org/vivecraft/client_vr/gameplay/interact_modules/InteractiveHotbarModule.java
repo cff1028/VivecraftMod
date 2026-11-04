@@ -78,12 +78,9 @@ public class InteractiveHotbarModule implements DebugRenderModule, InteractModul
         if (!this.dh.interactTracker.isActive(player)) return false;
         if (GuiHandler.GUI_RENDER_POS_ROOM == null) return false;
 
-        float scale =
-            GuiHandler.GUI_SCALE_APPLIED * (float) this.mc.getWindow().getGuiScale() / GuiHandler.GUI_SCALE_FACTOR_MAX;
-
         // get room pos
-        Vector3f barStart = getHotbarStart(scale);
-        Vector3f barEnd = getHotbarEnd(barStart, scale);
+        Vector3f barStart = getHotbarStart();
+        Vector3f barEnd = getHotbarEnd(barStart);
 
         Vector3fc main = this.dh.vrPlayer.vrdata_room_pre.getController(0).getPositionF();
 
@@ -142,21 +139,16 @@ public class InteractiveHotbarModule implements DebugRenderModule, InteractModul
         return this.hotbar >= 0;
     }
 
-    private Vector3f getHotbarStart(float scale) {
-        // offset from center to the left of the hotbar
-        Vector3f offset = GuiHandler.GUI_OFFSET_LOCAL.add(-0.32F * scale, -0.38F * scale, 0,
-            new Vector3f());
-
-        // transform local offset to room offset
-        GuiHandler.GUI_RENDER_ROTATION_ROOM.transformDirection(offset);
-
-        return offset.add(GuiHandler.GUI_RENDER_POS_ROOM);
+    private Vector3f getHotbarStart() {
+        return InteractiveHotbarGeometry.start(
+            this.mc.getWindow().getGuiScaledWidth(), this.mc.getWindow().getGuiScaledHeight(),
+            GuiHandler.GUI_SCALE_APPLIED, GuiHandler.GUI_OFFSET_LOCAL,
+            GuiHandler.GUI_RENDER_ROTATION_ROOM, GuiHandler.GUI_RENDER_POS_ROOM);
     }
 
-    private Vector3f getHotbarEnd(Vector3fc start, float scale) {
-        Vector3f endDir = GuiHandler.GUI_RENDER_ROTATION_ROOM.transformDirection(MathUtils.LEFT, new Vector3f())
-            .mul(0.64F * scale);
-        return endDir.add(start);
+    private Vector3f getHotbarEnd(Vector3fc start) {
+        return InteractiveHotbarGeometry.end(start, this.mc.getWindow().getGuiScaledWidth(),
+            GuiHandler.GUI_SCALE_APPLIED, GuiHandler.GUI_RENDER_ROTATION_ROOM);
     }
 
     @Override
@@ -189,14 +181,11 @@ public class InteractiveHotbarModule implements DebugRenderModule, InteractModul
         if (this.mc.screen != null || !this.dh.vrSettings.vrTouchHotbar) return;
         if (this.dh.vrSettings.vrHudLockMode == VRSettings.HUDLock.HEAD || !GuiHandler.HUD_POPUP) return;
 
-        float scale =
-            GuiHandler.GUI_SCALE_APPLIED * (float) this.mc.getWindow().getGuiScale() / GuiHandler.GUI_SCALE_FACTOR_MAX;
-
         VRData world = this.dh.vrPlayer.getVRDataWorld();
 
         // room pos
-        Vector3f barStartRoom = getHotbarStart(scale);
-        Vector3f barEndRoom = getHotbarEnd(barStartRoom, scale);
+        Vector3f barStartRoom = getHotbarStart();
+        Vector3f barEndRoom = getHotbarEnd(barStartRoom);
 
         // convert to world pos
         Vec3 barStart = VRPlayer.roomToWorldPos(barStartRoom, world);

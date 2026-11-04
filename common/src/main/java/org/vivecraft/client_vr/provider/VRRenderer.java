@@ -36,6 +36,7 @@ import org.vivecraft.client_vr.gameplay.trackers.TelescopeTracker;
 import org.vivecraft.client_vr.render.RenderConfigException;
 import org.vivecraft.client_vr.render.VRShaders;
 import org.vivecraft.client_vr.render.helpers.RenderHelper;
+import org.vivecraft.client_vr.render.helpers.ShaderHelper;
 import org.vivecraft.client_vr.render.helpers.graphics.GraphicsHelper;
 import org.vivecraft.client_vr.settings.VRSettings;
 import org.vivecraft.client_xr.render_pass.RenderPassManager;
@@ -148,6 +149,14 @@ public abstract class VRRenderer {
      * @throws RenderConfigException when the VR runtime throws any errors
      */
     public abstract void endFrame() throws RenderConfigException;
+
+    /** Acquires runtime images after render buffer setup. */
+    public void beginFrame() throws RenderConfigException {}
+
+    public void postProcessEye(RenderPass eye, RenderTarget source, float partialTick) {
+        this.framebufferEye[eye == RenderPass.LEFT ? 0 : 1].bindWrite(true);
+        ShaderHelper.doVrPostProcess(eye, source, partialTick);
+    }
 
     /**
      * @return if this VRRenderer provides stencil for the left/right RenderPass

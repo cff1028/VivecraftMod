@@ -1,5 +1,6 @@
 package org.vivecraft.client_vr.provider;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.ScrollWheelHandler;
@@ -32,6 +33,7 @@ import org.vivecraft.client_vr.gameplay.screenhandlers.GuiHandler;
 import org.vivecraft.client_vr.gameplay.screenhandlers.KeyboardHandler;
 import org.vivecraft.client_vr.gameplay.screenhandlers.RadialHandler;
 import org.vivecraft.client_vr.provider.openvr_lwjgl.VRInputAction;
+import org.vivecraft.client_vr.provider.openvr_lwjgl.control.TrackpadSwipeSampler;
 import org.vivecraft.client_vr.provider.openvr_lwjgl.control.VRInputActionSet;
 import org.vivecraft.client_vr.render.RenderConfigException;
 import org.vivecraft.client_vr.settings.AutoCalibration;
@@ -140,6 +142,8 @@ public abstract class MCVR {
     protected float hmdForwardYaw = 180;
     public boolean ignorePressesNextFrame = false;
     protected int quickTorchPreviousSlot;
+    protected boolean inputInitialized;
+    private final Map<String, TrackpadSwipeSampler> sharedInputSwipeSamplers = new HashMap<>();
     protected Map<String, VRInputAction> inputActions = new HashMap<>();
     protected Map<String, VRInputAction> inputActionsByKeyBinding = new HashMap<>();
 
@@ -1434,13 +1438,139 @@ public abstract class MCVR {
     /**
      * processes the fetched inputs from the VR runtime, and maps them to the ingame keys
      */
-    public abstract void processInputs();
+    public void processInputs() {
+        if (this.dh.vrSettings.seated || this.dh.viewOnly || !this.inputInitialized) {
+            this.ignorePressesNextFrame = false;
+            return;
+        }
 
-    /**
-     * @param keyMapping KeyMapping to check where it is bound at
-     * @return controller this Keymapping is mapped on, null if it isn't mapped
-     */
+        for (VRInputAction action : this.inputActions.values()) {
+            if (action.isHanded()) {
+                for (ControllerType controllertype : ControllerType.values()) {
+                    action.setCurrentHand(controllertype);
+                    this.processInputAction(action);
+                }
+            } else {
+                this.processInputAction(action);
+            }
+        }
+
+        this.processScrollInput(GuiHandler.KEY_SCROLL_AXIS,
+            () -> InputSimulator.scrollMouse(0.0D, 1.0D),
+            () -> InputSimulator.scrollMouse(0.0D, -1.0D));
+        this.processScrollInput(VivecraftVRMod.INSTANCE.keyHotbarScroll,
+            () -> this.changeHotbar(-1),
+            () -> this.changeHotbar(1));
+        this.processSwipeInput(VivecraftVRMod.INSTANCE.keyHotbarSwipeX,
+            () -> this.changeHotbar(1),
+            () -> this.changeHotbar(-1), null, null);
+        this.processSwipeInput(VivecraftVRMod.INSTANCE.keyHotbarSwipeY, null, null,
+            () -> this.changeHotbar(-1),
+            () -> this.changeHotbar(1));
+        this.ignorePressesNextFrame = false;
+    }
+
+
+    private void processInputAction(VRInputAction action) {
+        if (action.isActive() && action.isEnabledRaw() &&
+
+            (!ClientDataHolderVR.getInstance().vrSettings.ingameBindingsInGui ||
+                !(action.actionSet == VRInputActionSet.INGAME &&
+                    action.keyBinding.key.getType() == InputConstants.Type.MOUSE &&
+                    action.keyBinding.key.getValue() == GLFW.GLFW_MOUSE_BUTTON_LEFT && this.mc.screen != null
+                )
+            ))
+        {
+            if (action.isButtonChanged()) {
+                if (action.isButtonPressed() && action.isEnabled()) {
+
+                    if (!this.ignorePressesNextFrame) {
+                        action.pressBinding();
+                    }
+                } else {
+                    action.unpressBinding();
+                }
+            }
+        } else if (!this.isMovement ||
+            action.keyBinding != this.mc.options.keyLeft && action.keyBinding != this.mc.options.keyRight &&
+                action.keyBinding != this.mc.options.keyUp && action.keyBinding != this.mc.options.keyDown)
+        {
+
+            action.unpressBinding();
+        }
+    }
+
+    private void processScrollInput(KeyMapping keyMapping, Runnable upCallback, Runnable downCallback) {
+        VRInputAction action = this.getInputAction(keyMapping);
+
+        if (action.isEnabled() && action.getLastOrigin() != 0L) {
+            float value = action.getAxis2D(false).y();
+            if (value != 0.0F) {
+                if (value > 0.0F) {
+                    upCallback.run();
+                } else if (value < 0.0F) {
+                    downCallback.run();
+                }
+            }
+        }
+    }
+
+    private void processSwipeInput(
+        KeyMapping keyMapping, Runnable leftCallback, Runnable rightCallback, Runnable upCallback,
+        Runnable downCallback)
+    {
+        VRInputAction action = this.getInputAction(keyMapping);
+
+        if (action.isEnabled() && action.getLastOrigin() != 0L) {
+            ControllerType controller = this.findActiveBindingControllerType(keyMapping);
+
+            if (controller != null) {
+
+                if (!this.sharedInputSwipeSamplers.containsKey(keyMapping.getName())) {
+                    this.sharedInputSwipeSamplers.put(keyMapping.getName(), new TrackpadSwipeSampler());
+                }
+
+                TrackpadSwipeSampler trackpadswipesampler = this.sharedInputSwipeSamplers.get(keyMapping.getName());
+                trackpadswipesampler.update(controller, action.getAxis2D(false));
+
+                if (trackpadswipesampler.isSwipedUp() && upCallback != null) {
+                    this.triggerHapticPulse(controller, 0.001F, 400.0F, 0.5F);
+                    upCallback.run();
+                }
+
+                if (trackpadswipesampler.isSwipedDown() && downCallback != null) {
+                    this.triggerHapticPulse(controller, 0.001F, 400.0F, 0.5F);
+                    downCallback.run();
+                }
+
+                if (trackpadswipesampler.isSwipedLeft() && leftCallback != null) {
+                    this.triggerHapticPulse(controller, 0.001F, 400.0F, 0.5F);
+                    leftCallback.run();
+                }
+
+                if (trackpadswipesampler.isSwipedRight() && rightCallback != null) {
+                    this.triggerHapticPulse(controller, 0.001F, 400.0F, 0.5F);
+                    rightCallback.run();
+                }
+            }
+        }
+    }
+
     protected abstract ControllerType findActiveBindingControllerType(KeyMapping keyMapping);
+
+    public void handleEvents() {}
+
+    public final ControllerType resolveInputOriginControllerType(long origin) {
+        return this.getOriginControllerType(origin);
+    }
+
+    public ControllerType getInputActionControllerType(VRInputAction action) {
+        return this.getOriginControllerType(action.getLastOrigin());
+    }
+
+    protected ControllerType getOriginControllerType(long origin) {
+        return null;
+    }
 
     /**
      * polls VR events, and fetches new device poses and inputs

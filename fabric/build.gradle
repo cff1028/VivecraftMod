@@ -69,12 +69,17 @@ dependencies {
     include(implementation("org.lwjgl:lwjgl-openvr:${rootProject.lwjgl_version}:natives-windows")) { transitive = false }
 
     include(implementation("com.illposed.osc:javaosc-core:0.9"))
+    // Preserve QuestCraft's Android binding and nested module metadata.
+    include("questcraft.local:lwjgl3-3.3.3-lwjgl-openxr:3.3.3") { transitive = false }
+    include("questcraft.local:lwjgl-openxr:3.3.3:natives-linux") { transitive = false }
+    include("questcraft.local:lwjgl-openxr:3.3.3:natives-windows") { transitive = false }
     include(implementation("com.github.bhaptics:tact-java:0.1.4"))
     include(implementation("org.java-websocket:Java-WebSocket:1.5.1"))
 
 }
 
 processResources {
+    from(rootProject.file("LICENSE.md"))
     inputs.property "version", project.version
 
     filesMatching("fabric.mod.json") {
@@ -84,6 +89,8 @@ processResources {
 
 shadowJar {
     exclude "architectury.common.json"
+    // LWJGL is supplied by the nested modules.
+    exclude "org/lwjgl/**"
 
     configurations = [project.configurations.shadowCommon]
     archiveClassifier.set("dev-shadow")
