@@ -18,7 +18,9 @@ public abstract class MethodHolder {
     }
 
     public static boolean isKeyDown(int scancode) {
-        ByteBuffer keyboardState = SDLKeyboard.SDL_GetKeyboardState();
+        ByteBuffer keyboardState = Boolean.getBoolean("fcl.quest.vr") ?
+            org.vivecraft.client_vr.provider.openxr.compat.QuestSdlInput.SDL_GetKeyboardState() :
+            SDLKeyboard.SDL_GetKeyboardState();
         return keyboardState != null && keyboardState.get(scancode) != 0 || InputSimulator.isKeyDown(scancode);
     }
 

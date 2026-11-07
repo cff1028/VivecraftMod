@@ -31,8 +31,11 @@ public class InputSimulator {
     }
 
     private static void handleKeyAction(int key, int modifiers, int action) {
+        int keycode = Boolean.getBoolean("fcl.quest.vr") ?
+            org.vivecraft.client_vr.provider.openxr.compat.QuestSdlInput.SDL_GetKeyFromScancode(key, (short) modifiers, true) :
+            SDLKeyboard.SDL_GetKeyFromScancode(key, (short) modifiers, true);
         Minecraft.getInstance().keyboardHandler.keyPress(Minecraft.getInstance().getWindow().handle(), action,
-            new KeyEvent(key, SDLKeyboard.SDL_GetKeyFromScancode(key, (short) modifiers, true), modifiers));
+            new KeyEvent(key, keycode, modifiers));
     }
 
     public static void pressKey(int key, int modifiers) {

@@ -14,6 +14,8 @@ import org.vivecraft.client_vr.gameplay.VRPlayer;
 import org.vivecraft.client_vr.menuworlds.MenuWorldRenderer;
 import org.vivecraft.client_vr.provider.nullvr.NullVR;
 import org.vivecraft.client_vr.provider.openvr_lwjgl.MCOpenVR;
+import org.vivecraft.client_vr.provider.openxr.DeviceCompat;
+import org.vivecraft.client_vr.provider.openxr.MCOpenXR;
 import org.vivecraft.client_vr.render.RenderConfigException;
 import org.vivecraft.client_vr.render.VRShaders;
 import org.vivecraft.client_vr.settings.VRSettings;
@@ -66,6 +68,8 @@ public class VRState {
             ClientDataHolderVR dh = ClientDataHolderVR.getInstance();
             if (dh.vrSettings.stereoProviderPluginID == VRSettings.VRProvider.OPENVR) {
                 dh.vr = new MCOpenVR(Minecraft.getInstance(), dh);
+            } else if (dh.vrSettings.stereoProviderPluginID == VRSettings.VRProvider.OPENXR) {
+                dh.vr = new MCOpenXR(Minecraft.getInstance(), dh);
             } else {
                 dh.vr = new NullVR(Minecraft.getInstance(), dh);
             }
@@ -86,7 +90,9 @@ public class VRState {
 
             dh.vrPlayer = new VRPlayer();
 
-            if (Xloader.INSTANCE.isModLoaded("hapticcraft")) {
+            if (DeviceCompat.isAndroid()) {
+                VRSettings.LOGGER.info("Vivecraft: Quest controller haptics use OpenXR");
+            } else if (Xloader.INSTANCE.isModLoaded("hapticcraft")) {
                 VRSettings.LOGGER.info(
                     "Vivecraft: Not activating bHaptics integration, because the official 'HapticCraft' is loaded!");
             } else {
@@ -157,6 +163,11 @@ public class VRState {
 
     public static void destroyVR(boolean disableVRSetting) {
         ClientDataHolderVR dh = ClientDataHolderVR.getInstance();
+        // Release image wrappers before destroying the OpenXR swapchain.
+        if (dh.vr instanceof MCOpenXR && dh.vrRenderer != null) {
+            dh.vrRenderer.destroy();
+            dh.vrRenderer = null;
+        }
         if (dh.vr != null) {
             dh.vr.destroy();
         }

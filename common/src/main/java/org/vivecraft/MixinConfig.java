@@ -37,7 +37,23 @@ public class MixinConfig implements IMixinConfigPlugin {
     public void preApply(String targetClassName, ClassNode targetClass, String mixinClassName, IMixinInfo mixinInfo) {}
 
     @Override
-    public void postApply(String targetClassName, ClassNode targetClass, String mixinClassName, IMixinInfo mixinInfo) {}
+    public void postApply(String targetClassName, ClassNode targetClass, String mixinClassName, IMixinInfo mixinInfo) {
+        if (mixinClassName.equals("org.vivecraft.mixin.client_vr.lwjgl.QuestSdlCallsiteMixin")) {
+            if (this.questSdlTransformer == null) {
+                try {
+                    var provider = MixinService.getService().getBytecodeProvider();
+                    this.questSdlTransformer = new QuestSdlTransformer(
+                        provider.getClassNode("org.vivecraft.client_vr.provider.openxr.compat.QuestSdlWindow"),
+                        provider.getClassNode("org.vivecraft.client_vr.provider.openxr.compat.QuestSdlInput"));
+                } catch (ClassNotFoundException | IOException exception) {
+                    throw new IllegalStateException("Unable to load Quest window bridge", exception);
+                }
+            }
+            this.questSdlTransformer.transform(targetClass);
+        }
+    }
+
+    private QuestSdlTransformer questSdlTransformer;
 
     @Override
     public void onLoad(String mixinPackage) {}
@@ -55,6 +71,11 @@ public class MixinConfig implements IMixinConfigPlugin {
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        if (mixinClassName.equals("org.vivecraft.mixin.client_vr.lwjgl.QuestSdlCallsiteMixin") ||
+            mixinClassName.equals("org.vivecraft.mixin.client_vr.lwjgl.QuestGraphicsBackendMixin"))
+        {
+            return Boolean.getBoolean("fcl.quest.vr");
+        }
         // this is here because forge doesn't finish mod loading, if any mod fails to load, and would crash the game
         if (!Xloader.INSTANCE.isModLoadedSuccess()) {
             LOGGER.info("Vivecraft: not loading '{}' because mod failed to load completely", mixinClassName);

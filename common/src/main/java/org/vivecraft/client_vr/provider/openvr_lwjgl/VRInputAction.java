@@ -219,17 +219,18 @@ public class VRInputAction {
      */
     public boolean isEnabled() {
         if (!this.isEnabledRaw(this.currentHand)) return false;
-        if (MCOpenVR.get() == null) return false;
+        MCVR provider = MCVR.get();
+        if (provider == null) return false;
 
         long lastOrigin = this.getLastOrigin();
-        ControllerType hand = MCOpenVR.get().getOriginControllerType(lastOrigin);
+        ControllerType hand = provider.getInputActionControllerType(this);
 
         if (hand == null && this.isHanded()) return false;
 
         // iterate over all actions, and check if another action has a higher priority
-        for (VRInputAction action : MCOpenVR.get().getInputActions()) {
-            if (action != this && action.isEnabledRaw(hand) && action.isActive() &&
-                action.getPriority() > this.getPriority() && MCVR.get().getOrigins(action).contains(lastOrigin))
+        for (VRInputAction action : provider.getInputActions()) {
+            if (action != this && action.isEnabledRaw(hand) && action.isActive(hand) &&
+                action.getPriority() > this.getPriority() && provider.getOrigins(action).contains(lastOrigin))
             {
                 if (action.isHanded()) {
                     return !((HandedKeyBinding) action.keyBinding).isPriorityOnController(hand);
@@ -275,9 +276,16 @@ public class VRInputAction {
     }
 
     public boolean isActive() {
+        return this.isActive(this.currentHand);
+    }
+
+    /** Checks the requested hand independently of polling order. */
+    public boolean isActive(ControllerType hand) {
+        if (this.isHanded() && hand == null) return false;
+        int index = this.isHanded() ? hand.ordinal() : 0;
         return switch (this.type) {
-            case "boolean" -> this.digitalData().isActive;
-            case "vector1", "vector2", "vector3" -> this.analogData().isActive;
+            case "boolean" -> this.digitalData[index].isActive;
+            case "vector1", "vector2", "vector3" -> this.analogData[index].isActive;
             default -> false;
         };
     }
@@ -511,7 +519,7 @@ public class VRInputAction {
             }
         }
 
-        if (key.getValue() != -1 &&
+        if (key.getValue() != SDLScancode.SDL_SCANCODE_UNKNOWN &&
             (!VivecraftVRMod.INSTANCE.isSafeBinding(this.keyBinding) || Xplat.INSTANCE.hasKeyModifier(this.keyBinding)))
         {
             if (key.getType() == InputConstants.Type.KEYBOARD) {

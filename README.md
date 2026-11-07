@@ -1,28 +1,27 @@
-# Vivecraft Mod (of Vivecraft fabric)
-A port of [Vivecraft](https://www.vivecraft.org) to Fabric/Quilt and back to Forge/Neoforge.\
-This is an official continuation of the project, using mixin's instead of patches.\
-This means we could use a multiloader setup to develop on Fabric, Forge, Neoforge and Quilt at the same time.\
-It also removed Optifine as a dependency, so mod compatibility *should* be better as well.
+# Vivecraft OpenXR — Minecraft 26.3
 
-Curseforge: [![DOWNLOAD](https://cf.way2muchnoise.eu/title/667903.svg)](https://www.curseforge.com/minecraft/mc-mods/vivecraft)\
-Modrinth: [![Modrinth](https://img.shields.io/modrinth/dt/vivecraft)](https://modrinth.com/mod/vivecraft)
+将 QuestCraft 的 OpenXR 适配移植到 Vivecraft 26.3-1.3.18，面向 Quest 一体机和 Fabric。
 
-Since this version no longer ships with Optifine, we recommend you use Sodium (and the rest of the family) on Fabric/Quilt/Neoforge (and the unofficial ports on Forge) to maximize performance. For shaders you can use Iris on Fabric/Quilt/Neoforge (and the unofficial ports on Forge).
-If you want, you can still use Optifine though. There is built in compatibility for it.
+- 双眼数组纹理直接渲染、独立眼部 FOV 与反向深度投影。
+- Touch 手柄输入、震动及手腕／手掌快捷栏选择。
+- 对接 FCL Quest VR 0.1.1 和 LWJGL 3.4.1。
+- Quest 窗口和输入通过 FCL 的 GLFW/EGL VR 桥接入 SDL 接口。
+- 主菜单默认显示 VR 开关。
 
-## Mod compatibility
-Mod compatibility is important to us. If you find any issues, don't be afraid to open an issue. Be sure to check if it isn't already known though, so we don't have duplicates.
+## 使用
 
-## Current status
-- [x] Loaded in game
-- [x] Moving in game
-- [x] Playable (with some bugs and missing features)
-- [x] Fully playable
-- [x] Sodium support
-- [X] Iris support
-- [X] In game VR switching
-- [X] API, details [here](https://github.com/Vivecraft/VivecraftMod/wiki/Mod-API)
-- [ ] OpenXR support
+需要 Minecraft 26.3、Fabric Loader 0.19.5 或更高版本、Java 25 和 FCL Quest VR 0.1.1。FCL 使用 LWJGL 3.4.1 与 Quest MobileGlues，并提供 OpenXR 和 `vloader`。将 Fabric JAR 放入实例的 `mods` 目录，替换其他 Vivecraft JAR。
 
-[Vivecraft Discord server](https://discord.gg/2x3QCk8qa9)\
-[Development Discord server](https://discord.gg/jYyyv7zhSW)
+## 构建
+
+使用 JDK 25，默认构建 Fabric：
+
+```sh
+./gradlew :fabric:jar
+```
+
+Windows 使用 `gradlew.bat :fabric:jar`。产物位于 `build/libs/`，Android OpenXR 绑定位于 `quest-libs/`。
+
+## 来源
+
+基于 [Vivecraft 26.3-1.3.18](https://github.com/Vivecraft/VivecraftMod/tree/26.3-1.3.18)，OpenXR 移植自 [QuestCraft VivecraftMod](https://github.com/QuestCraftPlusPlus/VivecraftMod)。许可证见 [LICENSE.md](LICENSE.md)。

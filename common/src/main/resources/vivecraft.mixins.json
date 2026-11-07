@@ -4,6 +4,8 @@
   "plugin": "org.vivecraft.MixinConfig",
   "compatibilityLevel": "JAVA_17",
   "client": [
+    "client_vr.lwjgl.QuestSdlCallsiteMixin",
+    "client_vr.lwjgl.QuestGraphicsBackendMixin",
     "client.OptionInstanceMixin",
     "client.ResourceLoadStateTrackerMixin",
     "client.blaze3d.BufferBuilderMixin",
@@ -46,6 +48,7 @@
     "client_vr.OptionsVRMixin",
     "client_vr.blaze3d.audio.LibraryVRMixin",
     "client_vr.blaze3d.opengl.GlStateManagerVRMixin",
+    "client_vr.blaze3d.opengl.OpenXRFrameBufferCacheMixin",
     "client_vr.blaze3d.platform.InputConstantsVRMixin",
     "client_vr.blaze3d.platform.WindowVRMixin",
     "client_vr.blaze3d.vulkan.VulkanBackendVRMixin",

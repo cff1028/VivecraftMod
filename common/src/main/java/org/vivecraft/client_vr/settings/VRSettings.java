@@ -179,6 +179,7 @@ public class VRSettings {
 
     public enum VRProvider implements OptionEnum<VRProvider> {
         OPENVR,
+        OPENXR,
         NULLVR
     }
 
@@ -242,7 +243,7 @@ public class VRSettings {
     public int version = UNKNOWN_VERSION;
 
     @SettingField(VrOptions.VR_PLUGIN)
-    public VRProvider stereoProviderPluginID = VRProvider.OPENVR;
+    public VRProvider stereoProviderPluginID = VRProvider.OPENXR;
     public boolean storeDebugAim = false;
     @SettingField
     public int smoothRunTickCount = 20;
@@ -674,7 +675,7 @@ public class VRSettings {
     @SettingField(VrOptions.GUI_ANISOTROPIC_FILTERING)
     public boolean guiAnisotropicFiltering = true;
     @SettingField(VrOptions.SHOW_UPDATES)
-    public boolean alwaysShowUpdates = true;
+    public boolean alwaysShowUpdates = false;
     @SettingField
     public String lastUpdate = "";
     @SettingField(VrOptions.UPDATE_TYPE)
@@ -688,13 +689,13 @@ public class VRSettings {
     @SettingField(VrOptions.CHAT_MESSAGE_STENCIL)
     public boolean showChatMessageStencil = true;
     @SettingField(value = VrOptions.VR_ENABLED, config = "vrEnabled")
-    public boolean vrEnabled = false;
+    public boolean vrEnabled = true;
     @SettingField(VrOptions.VR_CLOSE_WITH_RUNTIME)
     public boolean closeWithRuntime = true;
     @SettingField(VrOptions.VR_REMEMBER_ENABLED)
     public boolean rememberVr = true;
     @SettingField(VrOptions.VR_HOTSWITCH)
-    public boolean vrHotswitchingEnabled = true;
+    public boolean vrHotswitchingEnabled = false;
     @SettingField(VrOptions.VR_TOGGLE_BUTTON_VISIBLE)
     public boolean vrToggleButtonEnabled = true;
     @SettingField(VrOptions.VR_SETTINGS_BUTTON_VISIBLE)
@@ -710,7 +711,7 @@ public class VRSettings {
     @SettingField(VrOptions.SEARCH_TYPE)
     public boolean useFuzzySearch = true;
     @SettingField
-    public boolean disableGarbageCollectorMessage = false;
+    public boolean disableGarbageCollectorMessage = true;
     @SettingField
     public boolean selfButtSparklesInFirstPerson = false;
     @SettingField
@@ -2807,7 +2808,9 @@ public class VRSettings {
     private String getSystemKeys(Function<String, String> mapper, String fallback) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < this.keyboardCodes.length; i++) {
-            String k = SDLKeyboard.SDL_GetScancodeName(this.keyboardCodes[i]);
+            String k = Boolean.getBoolean("fcl.quest.vr") ?
+                org.vivecraft.client_vr.provider.openxr.compat.QuestSdlInput.SDL_GetScancodeName(this.keyboardCodes[i]) :
+                SDLKeyboard.SDL_GetScancodeName(this.keyboardCodes[i]);
             sb.append(k != null ? mapper.apply(k).charAt(0) : fallback.charAt(i));
         }
         return sb.toString();

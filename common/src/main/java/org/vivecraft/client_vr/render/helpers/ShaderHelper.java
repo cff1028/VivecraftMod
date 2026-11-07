@@ -195,6 +195,13 @@ public class ShaderHelper {
     public static void doVrPostProcess(
         RenderPass eye, RenderTarget source, RenderTarget target, PostProcessRenderState postProcessState)
     {
+        doVrPostProcess(eye, source, target, postProcessState, null);
+    }
+
+    public static void doVrPostProcess(
+        RenderPass eye, RenderTarget source, RenderTarget target, PostProcessRenderState postProcessState,
+        @Nullable RenderTarget mirrorTarget)
+    {
         VRShaders.POST_PROCESS_UBO.updateBuffer(
             postProcessState.pumpkinEffect > 0.0F ? 0.3F : postProcessState.fovReduction,
             DATA_HOLDER.vrSettings.fovRedutioncOffset,
@@ -209,11 +216,17 @@ public class ShaderHelper {
             eye == RenderPass.LEFT ? 1 : -1
         );
 
-        renderFullscreenQuad(() -> "Vive postprocessing", VRShaders.POST_PROCESSING_PIPELINE, renderPass -> {
+        Consumer<com.mojang.renderpearl.api.commands.RenderPass> uniforms = renderPass -> {
             renderPass.setUniform(PostProcessUBO.UBO_NAME, VRShaders.POST_PROCESS_UBO.getBuffer());
             renderPass.setUniform(VRShaders.POST_PROCESSING_COLOR_SAMPLER, source.getColorTextureView(),
                 RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
-        }, target.getColorTextureView(), GraphicsHelper.INSTANCE.flipEyeVertically());
+        };
+        renderFullscreenQuad(() -> "Vive postprocessing", VRShaders.POST_PROCESSING_PIPELINE, uniforms,
+            target.getColorTextureView(), GraphicsHelper.INSTANCE.flipEyeVertically());
+        if (mirrorTarget != null) {
+            renderFullscreenQuad(() -> "Vive eye mirror", VRShaders.POST_PROCESSING_PIPELINE, uniforms,
+                mirrorTarget.getColorTextureView(), GraphicsHelper.INSTANCE.flipEyeVertically());
+        }
         VRShaders.POST_PROCESS_UBO.endFrame();
     }
 
