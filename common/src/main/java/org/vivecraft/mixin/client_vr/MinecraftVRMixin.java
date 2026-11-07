@@ -75,6 +75,8 @@ import org.vivecraft.client_vr.gameplay.screenhandlers.GuiHandler;
 import org.vivecraft.client_vr.gameplay.trackers.TelescopeTracker;
 import org.vivecraft.client_vr.provider.MCVR;
 import org.vivecraft.client_vr.provider.openvr_lwjgl.VRInputAction;
+import org.vivecraft.client_vr.provider.openxr.MCOpenXR;
+import org.vivecraft.client_vr.provider.openxr.OpenXRStereoRenderer;
 import org.vivecraft.client_vr.render.MirrorNotification;
 import org.vivecraft.client_vr.render.RenderConfigException;
 import org.vivecraft.client_vr.render.VRFirstPersonArmSwing;
@@ -210,6 +212,7 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
         if (!VRState.VR_INITIALIZED) {
             return;
         }
+        ClientDataHolderVR.getInstance().vr.handleEvents();
         boolean vrActive = !ClientDataHolderVR.getInstance().vrSettings.vrHotswitchingEnabled ||
             ClientDataHolderVR.getInstance().vr.isActive();
         if (VRState.VR_RUNNING != vrActive && (ClientNetworking.SERVER_ALLOWS_VR_SWITCHING || this.player == null)) {
@@ -316,6 +319,7 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
                 Profiler.get().push("setupRenderConfiguration");
                 GraphicsHelper.INSTANCE.checkError("pre render setup");
                 ClientDataHolderVR.getInstance().vrRenderer.setupRenderConfiguration();
+                ClientDataHolderVR.getInstance().vrRenderer.beginFrame();
                 GraphicsHelper.INSTANCE.checkError("post render setup");
             } catch (Exception e) {
                 // something went wrong, disable VR
@@ -391,7 +395,28 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
 
     @Inject(method = "renderFrame", at = @At("TAIL"))
     private void vivecraft$resetPoll(CallbackInfo ci) {
+        this.vivecraft$finishOpenXRFrame();
         this.vivecraft$polled = false;
+    }
+
+    @Inject(method = "runTick", at = @At("TAIL"))
+    private void vivecraft$finishSkippedFrame(CallbackInfo ci) {
+        this.vivecraft$finishOpenXRFrame();
+        this.vivecraft$polled = false;
+    }
+
+    @Unique
+    private void vivecraft$finishOpenXRFrame() {
+        ClientDataHolderVR data = ClientDataHolderVR.getInstance();
+        if (data.vr instanceof MCOpenXR openxr && openxr.frameStarted &&
+            data.vrRenderer instanceof OpenXRStereoRenderer renderer)
+        {
+            try {
+                renderer.endFrame(false);
+            } catch (RenderConfigException e) {
+                VRSettings.LOGGER.error("Vivecraft: Failed to finish skipped OpenXR frame", e);
+            }
+        }
     }
 
     @WrapMethod(method = "pick(F)V")

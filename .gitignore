@@ -20,3 +20,8 @@ classes/
 .settings
 *.launch
 .architectury-transformer/
+/outputs/
+/validation/
+**/src/test/
+*.log
+*.class
