@@ -68,6 +68,7 @@ import org.vivecraft.client_vr.gameplay.KeybindHandler;
 import org.vivecraft.client_vr.gameplay.screenhandlers.GuiHandler;
 import org.vivecraft.client_vr.gameplay.trackers.TelescopeTracker;
 import org.vivecraft.client_vr.provider.MCVR;
+import org.vivecraft.client_vr.provider.openxr.FCLVRPresentation;
 import org.vivecraft.client_vr.provider.openvr_lwjgl.VRInputAction;
 import org.vivecraft.client_vr.render.MirrorNotification;
 import org.vivecraft.client_vr.render.RenderConfigException;
@@ -191,6 +192,7 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
             VRState.VR_ENABLED = false;
         }
         if (VRState.VR_ENABLED) {
+            FCLVRPresentation.beginVR();
             VRState.initializeVR();
         } else if (VRState.VR_INITIALIZED) {
             // turn off VR if it was on before
@@ -229,6 +231,11 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
         ClientDataHolderVR.getInstance().vr.poll(ClientDataHolderVR.getInstance().frameIndex);
         Profiler.get().pop();
         ClientDataHolderVR.getInstance().vrPlayer.postPoll();
+    }
+
+    @Inject(method = "runTick", at = @At("TAIL"))
+    private void vivecraft$syncFclPresentation(CallbackInfo ci) {
+        FCLVRPresentation.endFrame(!VRState.VR_ENABLED && !VRState.VR_INITIALIZED && !VRState.VR_RUNNING);
     }
 
     @Inject(method = "runTick", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/Minecraft;tick()V"))

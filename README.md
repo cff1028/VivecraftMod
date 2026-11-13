@@ -4,6 +4,7 @@
 
 - Quest OpenXR 会话、双眼渲染与视场角适配。
 - Touch 手柄输入、震动及手腕／手掌快捷栏选择。
+- FCL 平面／VR 切换与 Modern UI 兼容适配。
 
 从 [Releases](https://github.com/cff1028/VivecraftMod/releases) 下载 Fabric JAR，放入游戏的 `mods` 目录，并移除其他 Vivecraft JAR。启动器需提供 Android OpenXR 与 `vloader`。
 
