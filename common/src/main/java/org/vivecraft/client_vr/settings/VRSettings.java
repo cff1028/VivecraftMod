@@ -729,6 +729,11 @@ public class VRSettings {
     @SettingField
     public String requiredVulkanDeviceExtensions = "";
 
+    @SettingField
+    public String questVulkanInstanceExtensions = "";
+    @SettingField
+    public String questVulkanDeviceExtensions = "";
+
     /**
      * This isn't actually used, it's only a dummy field to save the value from vanilla Options.
      */

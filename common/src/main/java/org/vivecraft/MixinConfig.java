@@ -71,6 +71,9 @@ public class MixinConfig implements IMixinConfigPlugin {
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        if (mixinClassName.startsWith("org.vivecraft.mixin.client_vr.questvulkan.")) {
+            return "1".equals(System.getenv("FCL_VR_VULKAN"));
+        }
         if (mixinClassName.equals("org.vivecraft.mixin.client_vr.lwjgl.QuestSdlCallsiteMixin") ||
             mixinClassName.equals("org.vivecraft.mixin.client_vr.lwjgl.QuestGraphicsBackendMixin"))
         {

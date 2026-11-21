@@ -13,6 +13,7 @@ import org.spongepowered.asm.mixin.Mixin;
     "com.mojang.blaze3d.platform.Window",
     "com.mojang.blaze3d.platform.cursor.CursorType",
     "com.mojang.blaze3d.systems.RenderSystem",
+    "com.mojang.renderpearl.backend.vulkan.VulkanBackend",
     "com.mojang.renderpearl.backend.opengl.GlBackend",
     "com.mojang.renderpearl.backend.opengl.GlDevice",
     "com.mojang.renderpearl.backend.opengl.GlSurface",

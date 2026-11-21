@@ -21,7 +21,7 @@ import java.util.Set;
 
 public class VulkanHelper implements GraphicsHelper {
 
-    private VulkanDevice getVulkanDevice() {
+    public VulkanDevice getVulkanDevice() {
         if (RenderSystem.getDevice() instanceof FrontendGpuDevice gpuDevice &&
             gpuDevice.backend instanceof VulkanDevice vulkanDevice)
         {

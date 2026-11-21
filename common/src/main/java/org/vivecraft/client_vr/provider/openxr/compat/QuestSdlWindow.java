@@ -12,6 +12,7 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.vivecraft.client_vr.provider.openxr.QuestVulkanContext;
 
 import java.nio.IntBuffer;
 import java.util.HashMap;
@@ -104,7 +105,9 @@ public final class QuestSdlWindow {
     public static long SDL_GetWindowFromID(int id) { return windowFromId(id); }
 
     public static long SDL_CreateWindow(CharSequence title, int width, int height, long flags) {
-        if ((flags & SDL_WINDOW_VULKAN) != 0) throw new IllegalStateException("Quest OpenXR requires OpenGL");
+        if ((flags & SDL_WINDOW_VULKAN) != 0 && !QuestVulkanContext.requested()) {
+            throw new IllegalStateException("Quest Vulkan was not requested");
+        }
         if (width <= 0 || height <= 0) throw new IllegalArgumentException("Invalid Quest window size");
         if (!SDL_Init(0)) throw new IllegalStateException("Could not initialize the Quest GLFW bridge");
         if (host == 0) {

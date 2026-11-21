@@ -77,6 +77,7 @@ import org.vivecraft.client_vr.gameplay.trackers.TelescopeTracker;
 import org.vivecraft.client_vr.provider.MCVR;
 import org.vivecraft.client_vr.provider.openvr_lwjgl.VRInputAction;
 import org.vivecraft.client_vr.provider.openxr.MCOpenXR;
+import org.vivecraft.client_vr.provider.openxr.QuestVulkanContext;
 import org.vivecraft.client_vr.provider.openxr.OpenXRStereoRenderer;
 import org.vivecraft.client_vr.render.MirrorNotification;
 import org.vivecraft.client_vr.render.RenderConfigException;
@@ -170,6 +171,7 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
 
     @Inject(method = "onGameLoadFinished", at = @At("TAIL"))
     private void vivecraft$showGarbageCollectorScreen(CallbackInfo ci) {
+        QuestVulkanContext.onResourcesReady();
         // set the Garbage collector screen here, when it got reset after loading, but don't set it when using quickplay, because it would be removed after loading has finished
         if (ClientDataHolderVR.getInstance().cachedScreen != null &&
             !(this.gui.screen() instanceof LevelLoadingScreen ||
@@ -191,7 +193,10 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
         try {
             // the game crashed probably not because of us, so keep the vr choice
             VRState.destroyVR(false);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        } finally {
+            QuestVulkanContext.shutdown();
+        }
     }
 
     @Inject(method = "runTick", at = @At("HEAD"))
@@ -382,7 +387,7 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
             original.call(instance, commandEncoder, this.gameRenderer.mainRenderTarget.getColorTextureView());
             RenderPassManager.setGUIRenderPass();
         } else {
-            if (VRState.VR_ENABLED && !VRState.VR_INITIALIZED) {
+            if (VRState.VR_ENABLED && !VRState.VR_INITIALIZED && !QuestVulkanContext.waitingForResources()) {
                 // show message that the game is connecting to the vr runtime
                 RenderHelper.drawVRConnectingMessage();
             }

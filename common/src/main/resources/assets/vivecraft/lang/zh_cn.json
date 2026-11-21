@@ -1,4 +1,7 @@
 {
+  "vivecraft.messages.vulkanrestart.title": "重启进入 VR",
+  "vivecraft.messages.vulkanrestart.description": "进入 VR 需要重新创建 Vulkan 设备。选择「保存并退出」后，请从 FCL 再次启动游戏。",
+  "vivecraft.messages.vulkanrestart.quit": "保存并退出",
   "_comment0": "Contributors: IceFairyCirno, Logan_Haiz, BKCake, xwdit, TEGTianFan, Gigahertz",
   "_comment1": "Key bindings",
   "vivecraft.key.hotbarNext": "物品栏后一格",

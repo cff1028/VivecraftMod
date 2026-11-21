@@ -17,6 +17,7 @@ import org.vivecraft.client_vr.render.RenderConfigException;
 import org.vivecraft.client_vr.render.helpers.ShaderHelper;
 import org.vivecraft.client_vr.render.helpers.graphics.GraphicsHelper;
 import org.vivecraft.client_vr.render.helpers.graphics.OpenGLHelper;
+import org.vivecraft.client_vr.render.helpers.graphics.VulkanHelper;
 import org.vivecraft.client_vr.render.renderstates.PostProcessRenderState;
 import org.vivecraft.client_vr.settings.VRSettings;
 
@@ -27,6 +28,8 @@ public class OpenXRStereoRenderer extends VRRenderer {
     private final MCOpenXR openxr;
     private OpenXRSwapchainTarget[] leftFramebuffers;
     private OpenXRSwapchainTarget[] rightFramebuffers;
+    private OpenXRVulkanEyes vulkanEyes;
+    private boolean loggedVulkanFrame;
     private int swapIndex;
     private boolean imageAcquired;
     private boolean imageWaited;
@@ -43,9 +46,11 @@ public class OpenXRStereoRenderer extends VRRenderer {
     @Override
     public void checkCapabilities() throws RenderConfigException {
         super.checkCapabilities();
-        if (!(GraphicsHelper.INSTANCE instanceof OpenGLHelper)) {
+        if (QuestVulkanContext.requested() ? !(GraphicsHelper.INSTANCE instanceof VulkanHelper) :
+            !(GraphicsHelper.INSTANCE instanceof OpenGLHelper)) {
             throw new RenderConfigException(Component.literal("OpenXR graphics backend"),
-                Component.literal("Quest OpenXR requires the OpenGL renderer"));
+                Component.literal("Quest OpenXR requested " + (QuestVulkanContext.requested() ? "Vulkan" : "OpenGL") +
+                    " but the game uses " + RenderSystem.getDevice().getDeviceInfo().backendName()));
         }
     }
 
@@ -60,22 +65,29 @@ public class OpenXRStereoRenderer extends VRRenderer {
             if (imageCount <= 0) {
                 throw new IllegalStateException("OpenXR returned no swapchain images");
             }
-            XrSwapchainImageOpenGLKHR.Buffer images = this.openxr.device.createImageBuffers(imageCount, stack);
-            checkInitResult(XR10.xrEnumerateSwapchainImages(this.openxr.swapchain, count,
-                XrSwapchainImageBaseHeader.create(images.address(), images.capacity())),
-                "xrEnumerateSwapchainImages(images)");
-
-            this.leftFramebuffers = new OpenXRSwapchainTarget[imageCount];
-            this.rightFramebuffers = new OpenXRSwapchainTarget[imageCount];
-            for (int i = 0; i < imageCount; i++) {
-                int texture = images.get(i).image();
-                this.leftFramebuffers[i] = new OpenXRSwapchainTarget("OpenXR L Eye " + i, width, height, texture, 0, this.openxr.swapchainFormat);
-                this.rightFramebuffers[i] = new OpenXRSwapchainTarget("OpenXR R Eye " + i, width, height, texture, 1, this.openxr.swapchainFormat);
+            if (QuestVulkanContext.requested()) {
+                this.vulkanEyes = new OpenXRVulkanEyes(this.openxr.swapchain, count, this.openxr.swapchainFormat,
+                    width, height, stack);
+                this.loggedVulkanFrame = false;
+                VRSettings.LOGGER.info("Vivecraft OpenXR: Vulkan stereo targets {}x{}, {} images, format={}, layers=2",
+                    width, height, imageCount, this.openxr.swapchainFormat);
+            } else {
+                XrSwapchainImageOpenGLKHR.Buffer images = this.openxr.device.createImageBuffers(imageCount, stack);
+                checkInitResult(XR10.xrEnumerateSwapchainImages(this.openxr.swapchain, count,
+                    XrSwapchainImageBaseHeader.create(images.address(), images.capacity())),
+                    "xrEnumerateSwapchainImages(images)");
+                this.leftFramebuffers = new OpenXRSwapchainTarget[imageCount];
+                this.rightFramebuffers = new OpenXRSwapchainTarget[imageCount];
+                for (int i = 0; i < imageCount; i++) {
+                    int texture = images.get(i).image();
+                    this.leftFramebuffers[i] = new OpenXRSwapchainTarget("OpenXR L Eye " + i, width, height, texture, 0, this.openxr.swapchainFormat);
+                    this.rightFramebuffers[i] = new OpenXRSwapchainTarget("OpenXR R Eye " + i, width, height, texture, 1, this.openxr.swapchainFormat);
+                }
+                this.loggedEyes = 0;
+                VRSettings.LOGGER.info("Vivecraft OpenXR: direct eye rendering, {}x{}, {} swapchain images; GL vendor={}, renderer={}, library={}, FCL renderer={}",
+                    width, height, imageCount, GL11.glGetString(GL11.GL_VENDOR), GL11.glGetString(GL11.GL_RENDERER),
+                    System.getProperty("org.lwjgl.opengl.libname", "default"), System.getenv("FCL_VR_RENDERER"));
             }
-            this.loggedEyes = 0;
-            VRSettings.LOGGER.info("Vivecraft OpenXR: direct eye rendering, {}x{}, {} swapchain images; GL vendor={}, renderer={}, library={}, FCL renderer={}",
-                width, height, imageCount, GL11.glGetString(GL11.GL_VENDOR), GL11.glGetString(GL11.GL_RENDERER),
-                System.getProperty("org.lwjgl.opengl.libname", "default"), System.getenv("FCL_VR_RENDERER"));
             for (int eye = 0; eye < 2; eye++) {
                 this.framebufferEye[eye] = VRTextureTarget.builder(eye == 0 ? "L Eye" : "R Eye")
                     .withSize(width, height)
@@ -95,13 +107,15 @@ public class OpenXRStereoRenderer extends VRRenderer {
         }
     }
 
-    private void checkFrameResult(int result, String operation) throws RenderConfigException {
+    private boolean checkFrameResult(int result, String operation) throws RenderConfigException {
+        if (this.openxr.stopOnLoss(result)) return false;
         if (result != XR10.XR_SUCCESS) {
             this.lastError = operation + " failed: " + result;
             this.frameFailure = new RenderConfigException(Component.literal("OpenXR frame error"),
                 Component.literal(this.lastError));
             throw this.frameFailure;
         }
+        return true;
     }
 
     @Override
@@ -114,15 +128,17 @@ public class OpenXRStereoRenderer extends VRRenderer {
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             IntBuffer index = stack.callocInt(1);
-            checkFrameResult(XR10.xrAcquireSwapchainImage(this.openxr.swapchain,
+            if (!checkFrameResult(XR10.xrAcquireSwapchainImage(this.openxr.swapchain,
                 XrSwapchainImageAcquireInfo.calloc(stack).type(XR10.XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO), index),
-                "xrAcquireSwapchainImage");
+                "xrAcquireSwapchainImage")) return;
             this.imageAcquired = true;
             this.swapIndex = index.get(0);
-            checkFrameResult(XR10.xrWaitSwapchainImage(this.openxr.swapchain,
-                XrSwapchainImageWaitInfo.calloc(stack)
-                    .type(XR10.XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO).timeout(XR10.XR_INFINITE_DURATION)),
-                "xrWaitSwapchainImage");
+            var wait = XrSwapchainImageWaitInfo.calloc(stack).type$Default().timeout(XR10.XR_INFINITE_DURATION);
+            int result;
+            do {
+                result = XR10.xrWaitSwapchainImage(this.openxr.swapchain, wait);
+            } while (result == XR10.XR_TIMEOUT_EXPIRED);
+            if (!checkFrameResult(result, "xrWaitSwapchainImage")) return;
             this.imageWaited = true;
             this.renderedEyes = 0;
         }
@@ -134,6 +150,11 @@ public class OpenXRStereoRenderer extends VRRenderer {
             throw new IllegalStateException("OpenXR eye rendering requires an acquired and waited swapchain image");
         }
         int eyeIndex = eye == RenderPass.LEFT ? 0 : 1;
+        if (this.vulkanEyes != null) {
+            super.postProcessEye(eye, source, state);
+            this.renderedEyes |= 1 << eyeIndex;
+            return;
+        }
         OpenXRSwapchainTarget target = (eyeIndex == 0 ? this.leftFramebuffers : this.rightFramebuffers)[this.swapIndex];
         ShaderHelper.doVrPostProcess(eye, source, target, state, this.framebufferEye[eyeIndex]);
         this.renderedEyes |= 1 << eyeIndex;
@@ -210,13 +231,24 @@ public class OpenXRStereoRenderer extends VRRenderer {
                 }
             }
             if (this.imageAcquired && this.imageWaited) {
-                GraphicsHelper.INSTANCE.flush();
                 try {
+                    if (this.vulkanEyes != null) {
+                        if (submitLayer) this.vulkanEyes.submit(this.swapIndex, this.framebufferEye, stack);
+                    } else {
+                        GraphicsHelper.INSTANCE.flush();
+                    }
                     checkFrameResult(XR10.xrReleaseSwapchainImage(this.openxr.swapchain,
                         XrSwapchainImageReleaseInfo.calloc(stack).type(XR10.XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO)),
                         "xrReleaseSwapchainImage");
                     this.imageAcquired = false;
                     this.imageWaited = false;
+                    submitLayer &= this.openxr.shouldRender;
+                } catch (RuntimeException exception) {
+                    this.frameFailure = new RenderConfigException(Component.literal("OpenXR frame error"),
+                        Component.literal("Could not submit OpenXR eye images: " + exception));
+                    this.frameFailure.initCause(exception);
+                    failure = this.frameFailure;
+                    submitLayer = false;
                 } catch (RenderConfigException exception) {
                     failure = exception;
                     submitLayer = false;
@@ -248,7 +280,15 @@ public class OpenXRStereoRenderer extends VRRenderer {
                 endInfo.layers(layers);
             }
             try {
-                checkFrameResult(XR10.xrEndFrame(this.openxr.session, endInfo), "xrEndFrame");
+                int result = XR10.xrEndFrame(this.openxr.session, endInfo);
+                checkFrameResult(result, "xrEndFrame");
+                if (result == XR10.XR_SUCCESS && submitLayer && this.vulkanEyes != null && !this.loggedVulkanFrame) {
+                    VRSettings.LOGGER.info("Vivecraft OpenXR: submitted first Vulkan stereo frame, session=0x{} owner=0x{} " +
+                            "image={} layers=0/1 shouldRender={} displayTime={} xrEndFrame={}",
+                        Long.toHexString(this.openxr.session.address()), Long.toHexString(this.openxr.instance.address()),
+                        this.swapIndex, this.openxr.shouldRender, this.openxr.time, result);
+                    this.loggedVulkanFrame = true;
+                }
             } catch (RenderConfigException exception) {
                 failure = exception;
             }
@@ -282,14 +322,27 @@ public class OpenXRStereoRenderer extends VRRenderer {
         } catch (RenderConfigException exception) {
             VRSettings.LOGGER.warn("Vivecraft: could not finish the OpenXR frame during shutdown", exception);
         } finally {
-            super.destroy();
-            this.imageAcquired = false;
-            this.imageWaited = false;
+            try {
+                super.destroy();
+            } finally {
+                if (this.imageAcquired && this.imageWaited && this.openxr.swapchain != null) {
+                    try (MemoryStack stack = MemoryStack.stackPush()) {
+                        this.openxr.logError(XR10.xrReleaseSwapchainImage(this.openxr.swapchain,
+                            XrSwapchainImageReleaseInfo.calloc(stack).type$Default()), "xrReleaseSwapchainImage", "shutdown");
+                    }
+                }
+                this.imageAcquired = false;
+                this.imageWaited = false;
+            }
         }
     }
 
     @Override
     protected void destroyBuffers() {
+        if (this.vulkanEyes != null) {
+            this.vulkanEyes.close();
+            this.vulkanEyes = null;
+        }
         super.destroyBuffers();
         if (this.leftFramebuffers != null) {
             for (OpenXRSwapchainTarget framebuffer : this.leftFramebuffers) {
