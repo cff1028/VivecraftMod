@@ -10,6 +10,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.vivecraft.client.api_impl.VRClientAPIImpl;
 import org.vivecraft.client_vr.ClientDataHolderVR;
 import org.vivecraft.client_vr.VRState;
+import org.vivecraft.client_vr.provider.openxr.QuestVulkanContext;
 
 import javax.annotation.Nullable;
 
@@ -24,8 +25,20 @@ public abstract class ResourceLoadStateTrackerMixin {
     @Unique
     private boolean vivecraft$canceledMenuWorldBuilding = false;
 
+    @Unique
+    private boolean vivecraft$canceledVulkanEntry;
+
+    @Inject(method = "startRecovery", at = @At("HEAD"))
+    private void vivecraft$cancelPendingEntry(CallbackInfo ci) {
+        if (QuestVulkanContext.requested() && !VRState.VR_INITIALIZED) {
+            this.vivecraft$canceledVulkanEntry = true;
+            VRState.VR_ENABLED = false;
+        }
+    }
+
     @Inject(method = "finishReload", at = @At("TAIL"))
     private void vivecraft$initializeVR(CallbackInfo ci) {
+        QuestVulkanContext.setReloading(false);
         if (this.reloadState != null &&
             this.reloadState.reloadReason == ResourceLoadStateTracker.ReloadReason.INITIAL)
         {
@@ -33,7 +46,7 @@ public abstract class ResourceLoadStateTrackerMixin {
             if (ClientDataHolderVR.getInstance().vrSettings.vrEnabled &&
                 ClientDataHolderVR.getInstance().vrSettings.rememberVr)
             {
-                VRState.VR_ENABLED = true;
+                VRState.VR_ENABLED = !this.vivecraft$canceledVulkanEntry;
             } else {
                 ClientDataHolderVR.getInstance().vrSettings.vrEnabled = false;
                 ClientDataHolderVR.getInstance().vrSettings.saveOptions();
@@ -42,6 +55,7 @@ public abstract class ResourceLoadStateTrackerMixin {
             // register api trackers/interacts
             VRClientAPIImpl.INSTANCE.processRegistrationEvent();
         }
+        this.vivecraft$canceledVulkanEntry = false;
         if (this.vivecraft$canceledMenuWorldBuilding) {
             this.vivecraft$canceledMenuWorldBuilding = false;
             if (ClientDataHolderVR.getInstance().menuWorldRenderer != null) {
@@ -53,6 +67,7 @@ public abstract class ResourceLoadStateTrackerMixin {
 
     @Inject(method = "startReload", at = @At("HEAD"))
     private void vivecraft$cancelMenuWorld(CallbackInfo ci) {
+        QuestVulkanContext.setReloading(true);
         if (ClientDataHolderVR.getInstance().menuWorldRenderer != null &&
             ClientDataHolderVR.getInstance().menuWorldRenderer.isBuilding())
         {

@@ -1,4 +1,7 @@
 {
+  "vivecraft.messages.vulkanrestart.title": "Restart in VR",
+  "vivecraft.messages.vulkanrestart.description": "Entering VR requires recreating the Vulkan device. Save and quit, then launch Minecraft again from FCL.",
+  "vivecraft.messages.vulkanrestart.quit": "Save and quit",
   "_comment0": "Key bindings",
   "vivecraft.key.hotbarNext": "Hotbar Next",
   "vivecraft.key.hotbarPrev": "Hotbar Previous",

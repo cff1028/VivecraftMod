@@ -55,6 +55,9 @@ public class MixinConfig implements IMixinConfigPlugin {
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        if (mixinClassName.startsWith("org.vivecraft.mixin.client_vr.questvulkan.")) {
+            return "1".equals(System.getenv("FCL_VR_VULKAN"));
+        }
         // this is here because forge doesn't finish mod loading, if any mod fails to load, and would crash the game
         if (!Xloader.INSTANCE.isModLoadedSuccess()) {
             LOGGER.info("Vivecraft: not loading '{}' because mod failed to load completely", mixinClassName);

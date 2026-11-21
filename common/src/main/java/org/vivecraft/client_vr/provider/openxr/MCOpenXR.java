@@ -80,6 +80,7 @@ public class MCOpenXR extends MCVR {
     public boolean shouldRender = true;
     public boolean frameStarted;
     private boolean sessionRunning;
+    private boolean runtimeStopping;
     public final DeviceCompat device = DeviceCompat.detectDevice();
     public long[] haptics = new long[2];
     public String systemName;
@@ -89,7 +90,7 @@ public class MCOpenXR extends MCVR {
         super(mc, dh, VivecraftVRMod.INSTANCE);
         OME = this;
         this.hapticScheduler = new OpenXRHapticScheduler();
-        GL11.glDisable(GL_FRAMEBUFFER_SRGB);
+        if (!QuestVulkanContext.requested()) GL11.glDisable(GL_FRAMEBUFFER_SRGB);
     }
 
     @Override
@@ -107,7 +108,6 @@ public class MCOpenXR extends MCVR {
         this.inputInitialized = false;
         this.initialized = false;
         this.isActive = false;
-        this.sessionRunning = false;
 
         if (this.frameStarted && this.session != null) {
             try (MemoryStack stack = stackPush()) {
@@ -118,6 +118,19 @@ public class MCOpenXR extends MCVR {
             }
         }
         this.frameStarted = false;
+        if (QuestVulkanContext.requested() && this.sessionRunning && this.session != null) {
+            int result = XR10.xrRequestExitSession(this.session);
+            logError(result, "xrRequestExitSession", "");
+            if (result == XR10.XR_SUCCESS) {
+                long deadline = System.nanoTime() + 2_000_000_000L;
+                while (this.sessionRunning && System.nanoTime() < deadline && !Thread.currentThread().isInterrupted()) {
+                    pollVREvents();
+                    if (this.sessionRunning) java.util.concurrent.locks.LockSupport.parkNanos(5_000_000L);
+                }
+                if (this.sessionRunning) VRSettings.LOGGER.warn("OpenXR session stop timed out");
+            }
+        }
+        this.sessionRunning = false;
 
         // Destroy spaces before actions, and swapchains before the session.
         for (int i = 0; i < this.gripSpace.length; i++) {
@@ -147,7 +160,13 @@ public class MCOpenXR extends MCVR {
             this.xrViewSpace = null;
         }
         if (this.session != null) {
-            logError(XR10.xrDestroySession(this.session), "xrDestroySession", "");
+            int result = XR10.xrDestroySession(this.session);
+            logError(result, "xrDestroySession", "");
+            if (QuestVulkanContext.requested()) {
+                VRSettings.LOGGER.info("Vivecraft: stopped OpenXR session=0x{} owner=0x{} result={}",
+                    Long.toHexString(this.session.address()), Long.toHexString(this.instance.address()), result);
+                if (result < 0) QuestVulkanContext.invalidate(this.instance);
+            }
             this.session = null;
         }
         if (this.instance != null) {
@@ -160,7 +179,8 @@ public class MCOpenXR extends MCVR {
         }
         this.actionSetHandles.clear();
         if (this.instance != null) {
-            logError(XR10.xrDestroyInstance(this.instance), "xrDestroyInstance", "");
+            if (QuestVulkanContext.requested()) QuestVulkanContext.leave(this.instance);
+            else logError(XR10.xrDestroyInstance(this.instance), "xrDestroyInstance", "");
             this.instance = null;
         }
         if (this.activeActionSetsBuffer != null) {
@@ -170,6 +190,7 @@ public class MCOpenXR extends MCVR {
         this.paths.clear();
         this.boundSources.clear();
         this.sourceUserNames.clear();
+        this.inputActions.values().forEach(VRInputAction::unpressBindingImmediately);
         this.inputActions.clear();
         this.inputActionsByKeyBinding.clear();
         Arrays.fill(this.haptics, 0L);
@@ -178,7 +199,7 @@ public class MCOpenXR extends MCVR {
         if (OME == this) OME = null;
 
         this.eventDataBuffer.close();
-        GL11.glEnable(GL_FRAMEBUFFER_SRGB);
+        if (!QuestVulkanContext.requested()) GL11.glEnable(GL_FRAMEBUFFER_SRGB);
     }
 
     @Override
@@ -208,6 +229,10 @@ public class MCOpenXR extends MCVR {
 
             Profiler.get().push("updatePose/Vsync");
             this.updatePose();
+            if (!this.sessionRunning) {
+                Profiler.get().pop();
+                return;
+            }
             Profiler.get().popPush("processInputs");
             this.processInputs();
             Profiler.get().popPush("hmdSampling");
@@ -228,14 +253,24 @@ public class MCOpenXR extends MCVR {
                 this.session,
                 XrFrameWaitInfo.calloc(stack).type(XR10.XR_TYPE_FRAME_WAIT_INFO),
                 frameState);
+            if (this.stopOnLoss(error)) return;
             checkResult(error, "xrWaitFrame");
 
             this.time = frameState.predictedDisplayTime();
-            this.shouldRender = frameState.shouldRender();
+            boolean render = frameState.shouldRender();
+            if (this.shouldRender != render) {
+                VRSettings.LOGGER.debug("Vivecraft: OpenXR session=0x{} shouldRender={}",
+                    Long.toHexString(this.session.address()), render);
+            }
+            this.shouldRender = render;
 
             error = XR10.xrBeginFrame(
                 this.session,
                 XrFrameBeginInfo.calloc(stack).type(XR10.XR_TYPE_FRAME_BEGIN_INFO));
+            if (this.stopOnLoss(error)) {
+                this.frameStarted = error == XR10.XR_SESSION_LOSS_PENDING;
+                return;
+            }
             checkResult(error, "xrBeginFrame");
             this.frameStarted = true;
 
@@ -578,6 +613,10 @@ public class MCOpenXR extends MCVR {
             this.eventDataBuffer.clear();
             this.eventDataBuffer.type(XR10.XR_TYPE_EVENT_DATA_BUFFER);
             int error = XR10.xrPollEvent(this.instance, this.eventDataBuffer);
+            if (error == XR10.XR_ERROR_INSTANCE_LOST) {
+                this.stopLostInstance();
+                return;
+            }
             logError(error, "xrPollEvent", "");
             if (error != XR10.XR_SUCCESS) {
                 break;
@@ -586,8 +625,8 @@ public class MCOpenXR extends MCVR {
 
             switch (event.type()) {
                 case XR10.XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING -> {
-                    XrEventDataInstanceLossPending instanceLossPending = XrEventDataInstanceLossPending.create(
-                        event.address());
+                    this.stopLostInstance();
+                    return;
                 }
                 case XR10.XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED -> {
                     this.sessionChanged(XrEventDataSessionStateChanged.create(event.address()));
@@ -602,11 +641,39 @@ public class MCOpenXR extends MCVR {
         }
     }
 
+    private void stopLostInstance() {
+        VRSettings.LOGGER.warn("Vivecraft: OpenXR instance loss for owner=0x{}", Long.toHexString(this.instance.address()));
+        QuestVulkanContext.invalidate(this.instance);
+        this.stopSession();
+    }
+
+    boolean stopOnLoss(int result) {
+        if (result == XR10.XR_ERROR_INSTANCE_LOST) {
+            this.stopLostInstance();
+        } else if (result == XR10.XR_ERROR_SESSION_LOST || result == XR10.XR_SESSION_LOSS_PENDING) {
+            this.stopSession();
+        } else {
+            return false;
+        }
+        return true;
+    }
+
+    private void stopSession() {
+        this.runtimeStopping = true;
+        this.isActive = false;
+        this.sessionRunning = false;
+        this.shouldRender = false;
+        VRState.VR_ENABLED = false;
+    }
+
     private void sessionChanged(XrEventDataSessionStateChanged xrEventDataSessionStateChanged) {
+        if (this.session == null || xrEventDataSessionStateChanged.session() != this.session.address()) return;
         int state = xrEventDataSessionStateChanged.state();
+        VRSettings.LOGGER.info("Vivecraft: OpenXR session=0x{} state={}", Long.toHexString(this.session.address()), state);
 
         switch (state) {
             case XR10.XR_SESSION_STATE_READY: {
+                if (this.destroyed) break;
                 try (MemoryStack stack = MemoryStack.stackPush()) {
                     XrSessionBeginInfo sessionBeginInfo = XrSessionBeginInfo.calloc(stack);
                     sessionBeginInfo.type(XR10.XR_TYPE_SESSION_BEGIN_INFO);
@@ -614,6 +681,7 @@ public class MCOpenXR extends MCVR {
                     sessionBeginInfo.primaryViewConfigurationType(XR10.XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO);
 
                     int error = XR10.xrBeginSession(this.session, sessionBeginInfo);
+                    if (this.stopOnLoss(error)) return;
                     checkResult(error, "xrBeginSession");
                     this.sessionRunning = true;
                 }
@@ -632,6 +700,12 @@ public class MCOpenXR extends MCVR {
                 break;
             }
             case XR10.XR_SESSION_STATE_EXITING: {
+                if (this.destroyed) break;
+                if (QuestVulkanContext.requested()) {
+                    this.stopSession();
+                    break;
+                }
+                this.runtimeStopping = true;
                 if (ClientDataHolderVR.getInstance().vrSettings.closeWithRuntime) {
                     VRSettings.LOGGER.info("Vivecraft: OpenXR stopped, closing the game with it");
                     this.mc.stop();
@@ -652,9 +726,7 @@ public class MCOpenXR extends MCVR {
                 break;
             }
             case XR10.XR_SESSION_STATE_LOSS_PENDING: {
-                this.isActive = false;
-                this.sessionRunning = false;
-                VRState.VR_ENABLED = false;
+                this.stopSession();
                 break;
             }
             default:
@@ -682,7 +754,9 @@ public class MCOpenXR extends MCVR {
             this.tried = true;
             this.mc = Minecraft.getInstance();
             try {
-                this.initializeOpenXRInstance();
+                this.instance = QuestVulkanContext.requested() ? QuestVulkanContext.claimInstance() :
+                    createInstance(this.device, this.device.getGraphicsExtension());
+                this.poseMatrices = new Matrix4f[64];
                 this.initializeOpenXRSession();
                 this.initializeOpenXRSpace();
                 this.initializeOpenXRSwapChain();
@@ -702,35 +776,37 @@ public class MCOpenXR extends MCVR {
                 this.deviceVelocity[i] = new Vector3f();
             }
 
+            this.initSuccess = true;
             this.initialized = true;
             return true;
         }
     }
 
-    private void initializeOpenXRInstance() {
+    static XrInstance createInstance(DeviceCompat device, String graphicsExtension) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            this.device.initOpenXRLoader(stack);
+            device.initializeLoader(stack);
 
             IntBuffer numExtensions = stack.callocInt(1);
             int error = XR10.xrEnumerateInstanceExtensionProperties((ByteBuffer) null, numExtensions, null);
-            logError(error, "xrEnumerateInstanceExtensionProperties", "get count");
+            checkResult(error, "xrEnumerateInstanceExtensionProperties");
 
             XrExtensionProperties.Buffer properties = new XrExtensionProperties.Buffer(
                 bufferStack(numExtensions.get(0), XrExtensionProperties.SIZEOF, XR10.XR_TYPE_EXTENSION_PROPERTIES)
             );
 
             error = XR10.xrEnumerateInstanceExtensionProperties((ByteBuffer) null, numExtensions, properties);
-            logError(error, "xrEnumerateInstanceExtensionProperties", "get extensions");
+            checkResult(error, "xrEnumerateInstanceExtensionProperties");
 
-            String graphicsExtension = this.device.getGraphicsExtension();
+            boolean needsAndroidExtension = device instanceof DeviceCompat.Mobile;
             boolean missingGraphics = true;
             PointerBuffer extensions = stack.callocPointer(numExtensions.get(0));
             while (properties.hasRemaining()) {
                 XrExtensionProperties prop = properties.get();
                 String extensionName = prop.extensionNameString();
-                if (this.device instanceof DeviceCompat.Mobile &&
+                if (needsAndroidExtension &&
                     extensionName.equals(KHRAndroidCreateInstance.XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME)) {
                     extensions.put(memAddress(stackUTF8(extensionName)));
+                    needsAndroidExtension = false;
                 }
                 if (extensionName.equals(graphicsExtension)) {
                     missingGraphics = false;
@@ -756,8 +832,11 @@ public class MCOpenXR extends MCVR {
                 }
             }
 
+            if (needsAndroidExtension) {
+                throw new IllegalStateException("OpenXR runtime is missing XR_KHR_android_create_instance");
+            }
             if (missingGraphics) {
-                throw new RuntimeException("OpenXR runtime is missing a supported graphics extension.");
+                throw new RuntimeException("OpenXR runtime is missing " + graphicsExtension);
             }
 
             XrApplicationInfo applicationInfo = XrApplicationInfo.calloc(stack);
@@ -767,13 +846,14 @@ public class MCOpenXR extends MCVR {
 
             XrInstanceCreateInfo createInfo = XrInstanceCreateInfo.calloc(stack);
             createInfo.type(XR10.XR_TYPE_INSTANCE_CREATE_INFO);
-            createInfo.next(this.device.getPlatformInfo(stack));
+
             createInfo.createFlags(0);
             createInfo.applicationInfo(applicationInfo);
             createInfo.enabledApiLayerNames(null);
             createInfo.enabledExtensionNames(extensions.flip());
 
             PointerBuffer instancePtr = stack.callocPointer(1);
+            createInfo.next(device.instancePlatformInfo(stack));
             int xrResult = XR10.xrCreateInstance(createInfo, instancePtr);
             if (xrResult == XR10.XR_ERROR_RUNTIME_FAILURE) {
                 throw new RuntimeException("Failed to create xrInstance, are you sure your headset is plugged in?");
@@ -782,15 +862,7 @@ public class MCOpenXR extends MCVR {
             } else if (xrResult < 0) {
                 throw new RuntimeException("XR method returned " + xrResult);
             }
-            this.instance = new XrInstance(instancePtr.get(0), createInfo);
-
-            this.poseMatrices = new Matrix4f[64];
-
-            for (int i = 0; i < this.poseMatrices.length; ++i) {
-                this.poseMatrices[i] = new Matrix4f();
-            }
-
-            this.initSuccess = true;
+            return new XrInstance(instancePtr.get(0), createInfo);
         }
     }
 
@@ -801,23 +873,23 @@ public class MCOpenXR extends MCVR {
     private void initializeOpenXRSession() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
 
-            XrSystemGetInfo system = XrSystemGetInfo.calloc(stack);
-            system.type(XR10.XR_TYPE_SYSTEM_GET_INFO);
-            system.next(NULL);
-            system.formFactor(XR10.XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY);
-
-            LongBuffer longBuffer = stack.callocLong(1);
-            int error = XR10.xrGetSystem(this.instance, system, longBuffer);
-            logError(error, "xrGetSystem", "");
-            this.systemID = longBuffer.get(0);
+            if (QuestVulkanContext.requested()) {
+                this.systemID = QuestVulkanContext.systemId(this.instance);
+            } else {
+                XrSystemGetInfo system = XrSystemGetInfo.calloc(stack).type$Default()
+                    .formFactor(XR10.XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY);
+                LongBuffer id = stack.callocLong(1);
+                checkResult(XR10.xrGetSystem(this.instance, system, id), "xrGetSystem");
+                this.systemID = id.get(0);
+            }
 
             if (this.systemID == 0) {
                 throw new RuntimeException("No compatible headset detected");
             }
 
             XrSystemProperties systemProperties = XrSystemProperties.calloc(stack).type(XR10.XR_TYPE_SYSTEM_PROPERTIES);
-            error = XR10.xrGetSystemProperties(this.instance, this.systemID, systemProperties);
-            MCOpenXR.get().logError(error, "xrGetSystemProperties", "");
+            int error = XR10.xrGetSystemProperties(this.instance, this.systemID, systemProperties);
+            checkResult(error, "xrGetSystemProperties");
             XrSystemTrackingProperties trackingProperties = systemProperties.trackingProperties();
             XrSystemGraphicsProperties graphicsProperties = systemProperties.graphicsProperties();
 
@@ -836,14 +908,14 @@ public class MCOpenXR extends MCVR {
             VRSettings.LOGGER.info("Headset Max Width: {}, Max Height: {}, Max Layer Count: {}", maxWidth, maxHeight,
                 maxLayerCount);
 
-            XrSessionCreateInfo info = XrSessionCreateInfo.calloc(stack);
-            info.type(XR10.XR_TYPE_SESSION_CREATE_INFO);
-            info.next(this.device.checkGraphics(stack, this.instance, this.systemID).address());
-            info.createFlags(0);
-            info.systemId(this.systemID);
-
             PointerBuffer sessionPtr = stack.callocPointer(1);
-            error = XR10.xrCreateSession(this.instance, info, sessionPtr);
+            if (QuestVulkanContext.requested()) {
+                error = QuestVulkanContext.createSession(stack, this.instance, this.systemID, sessionPtr);
+            } else {
+                var info = XrSessionCreateInfo.calloc(stack).type$Default().systemId(this.systemID)
+                    .next(this.device.checkGraphics(stack, this.instance, this.systemID).address());
+                error = XR10.xrCreateSession(this.instance, info, sessionPtr);
+            }
             checkResult(error, "xrCreateSession");
 
             this.session = new XrSession(sessionPtr.get(0), this.instance);
@@ -851,6 +923,7 @@ public class MCOpenXR extends MCVR {
             boolean checked = false;
             long deadline = System.nanoTime() + 30_000_000_000L;
             while (!this.sessionRunning) {
+                if (this.runtimeStopping) throw new IllegalStateException("OpenXR stopped during session startup");
                 if (System.nanoTime() >= deadline) {
                     throw new IllegalStateException("OpenXR session did not become READY within 30 seconds");
                 }
@@ -885,11 +958,11 @@ public class MCOpenXR extends MCVR {
             PointerBuffer pp = stack.callocPointer(1);
             int error = XR10.xrCreateReferenceSpace(this.session, referenceSpaceCreateInfo, pp);
             this.xrAppSpace = new XrSpace(pp.get(0), this.session);
-            logError(error, "xrCreateReferenceSpace", "XR_REFERENCE_SPACE_TYPE_STAGE");
+            checkResult(error, "xrCreateReferenceSpace");
 
             referenceSpaceCreateInfo.referenceSpaceType(XR10.XR_REFERENCE_SPACE_TYPE_VIEW);
             error = XR10.xrCreateReferenceSpace(this.session, referenceSpaceCreateInfo, pp);
-            logError(error, "xrCreateReferenceSpace", "XR_REFERENCE_SPACE_TYPE_VIEW");
+            checkResult(error, "xrCreateReferenceSpace");
             this.xrViewSpace = new XrSpace(pp.get(0), this.session);
         }
     }
@@ -900,14 +973,15 @@ public class MCOpenXR extends MCVR {
             IntBuffer intBuf = stack.callocInt(1);
             int error = XR10.xrEnumerateViewConfigurationViews(this.instance, this.systemID,
                 XR10.XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, intBuf, null);
-            logError(error, "xrEnumerateViewConfigurationViews", "get count");
+            checkResult(error, "xrEnumerateViewConfigurationViews");
 
+            if (intBuf.get(0) != 2) throw new IllegalStateException("OpenXR requires two stereo views");
             ByteBuffer viewConfBuffer = bufferStack(intBuf.get(0), XrViewConfigurationView.SIZEOF,
                 XR10.XR_TYPE_VIEW_CONFIGURATION_VIEW);
             XrViewConfigurationView.Buffer views = new XrViewConfigurationView.Buffer(viewConfBuffer);
             error = XR10.xrEnumerateViewConfigurationViews(this.instance, this.systemID,
                 XR10.XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, intBuf, views);
-            logError(error, "xrEnumerateViewConfigurationViews", "get views");
+            checkResult(error, "xrEnumerateViewConfigurationViews");
             int viewCountNumber = intBuf.get(0);
 
             this.viewBuffer = new XrView.Buffer(
@@ -915,51 +989,19 @@ public class MCOpenXR extends MCVR {
             );
 
             error = XR10.xrEnumerateSwapchainFormats(this.session, intBuf, null);
-            logError(error, "xrEnumerateSwapchainFormats", "get count");
+            checkResult(error, "xrEnumerateSwapchainFormats");
 
             LongBuffer swapchainFormats = stack.callocLong(intBuf.get(0));
             error = XR10.xrEnumerateSwapchainFormats(this.session, intBuf, swapchainFormats);
-            logError(error, "xrEnumerateSwapchainFormats", "get formats");
+            checkResult(error, "xrEnumerateSwapchainFormats");
 
-            long[] desiredSwapchainFormats = {
-
-                GL21.GL_SRGB8_ALPHA8,
-                GL21.GL_SRGB8,
-
-                GL11.GL_RGB10_A2,
-                GL30.GL_RGBA16F,
-                GL30.GL_RGB16F,
-
-                // Linear 8-bit formats are fallbacks because they can cause banding.
-                GL11.GL_RGBA8,
-                GL31.GL_RGBA8_SNORM,
-            };
-
-            long chosenFormat = 0;
-            for (long glFormatIter : desiredSwapchainFormats) {
-                swapchainFormats.rewind();
-                while (swapchainFormats.hasRemaining()) {
-                    if (glFormatIter == swapchainFormats.get()) {
-                        chosenFormat = glFormatIter;
-                        break;
-                    }
-                }
-                if (chosenFormat != 0) {
-                    break;
-                }
-            }
-
-            if (chosenFormat == 0) {
-                var formats = new ArrayList<Long>();
-                swapchainFormats.rewind();
-                while (swapchainFormats.hasRemaining()) {
-                    formats.add(swapchainFormats.get());
-                }
-                throw new RuntimeException("No compatible swapchain / framebuffer format available: " + formats);
-            }
-
+            long chosenFormat = QuestVulkanContext.requested() ? OpenXRVulkanEyes.selectFormat(swapchainFormats) :
+                selectGLFormat(swapchainFormats);
             this.swapchainFormat = chosenFormat;
-            XrViewConfigurationView viewConfig = views.get(0);
+            int width = Math.max(views.get(0).recommendedImageRectWidth(), views.get(1).recommendedImageRectWidth());
+            int height = Math.max(views.get(0).recommendedImageRectHeight(), views.get(1).recommendedImageRectHeight());
+            width = Math.min(width, Math.min(views.get(0).maxImageRectWidth(), views.get(1).maxImageRectWidth()));
+            height = Math.min(height, Math.min(views.get(0).maxImageRectHeight(), views.get(1).maxImageRectHeight()));
             XrSwapchainCreateInfo swapchainCreateInfo = XrSwapchainCreateInfo.calloc(stack);
             swapchainCreateInfo.type(XR10.XR_TYPE_SWAPCHAIN_CREATE_INFO);
             swapchainCreateInfo.next(NULL);
@@ -968,8 +1010,8 @@ public class MCOpenXR extends MCVR {
                 XR10.XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT);
             swapchainCreateInfo.format(chosenFormat);
             swapchainCreateInfo.sampleCount(1);
-            swapchainCreateInfo.width(viewConfig.recommendedImageRectWidth());
-            swapchainCreateInfo.height(viewConfig.recommendedImageRectHeight());
+            swapchainCreateInfo.width(width);
+            swapchainCreateInfo.height(height);
             swapchainCreateInfo.faceCount(1);
             swapchainCreateInfo.arraySize(2);
             swapchainCreateInfo.mipCount(1);
@@ -980,7 +1022,49 @@ public class MCOpenXR extends MCVR {
             this.swapchain = new XrSwapchain(handlePointer.get(0), this.session);
             this.width = swapchainCreateInfo.width();
             this.height = swapchainCreateInfo.height();
+            VRSettings.LOGGER.info("Vivecraft: OpenXR stereo swapchain format={} size={}x{} layers=2",
+                chosenFormat, width, height);
         }
+    }
+
+    private static long selectGLFormat(LongBuffer swapchainFormats) {
+        long[] desiredSwapchainFormats = {
+
+            GL21.GL_SRGB8_ALPHA8,
+            GL21.GL_SRGB8,
+
+            GL11.GL_RGB10_A2,
+            GL30.GL_RGBA16F,
+            GL30.GL_RGB16F,
+
+            // Prefer sRGB to avoid banding.
+            GL11.GL_RGBA8,
+            GL31.GL_RGBA8_SNORM,
+        };
+
+        long chosenFormat = 0;
+        for (long glFormatIter : desiredSwapchainFormats) {
+            swapchainFormats.rewind();
+            while (swapchainFormats.hasRemaining()) {
+                if (glFormatIter == swapchainFormats.get()) {
+                    chosenFormat = glFormatIter;
+                    break;
+                }
+            }
+            if (chosenFormat != 0) {
+                break;
+            }
+        }
+
+        if (chosenFormat == 0) {
+            var formats = new ArrayList<Long>();
+            swapchainFormats.rewind();
+            while (swapchainFormats.hasRemaining()) {
+                formats.add(swapchainFormats.get());
+            }
+            throw new RuntimeException("No compatible swapchain / framebuffer format available: " + formats);
+        }
+        return chosenFormat;
     }
 
     private void initDisplayRefreshRate() {
@@ -1232,7 +1316,7 @@ public class MCOpenXR extends MCVR {
                 stackPointers(this.actionSetHandles.values().stream().mapToLong(value -> value).toArray()));
 
             error = XR10.xrAttachSessionActionSets(this.session, attach_info);
-            logError(error, "xrAttachSessionActionSets", "");
+            checkResult(error, "xrAttachSessionActionSets");
 
             XrActionSet actionSet = new XrActionSet(this.actionSetHandles.get(VRInputActionSet.GLOBAL), this.instance);
             XrActionSpaceCreateInfo actionSpace = XrActionSpaceCreateInfo.calloc(stack);
@@ -1243,25 +1327,25 @@ public class MCOpenXR extends MCVR {
             actionSpace.poseInActionSpace(POSE_IDENTITY);
             PointerBuffer pp = stackCallocPointer(1);
             error = XR10.xrCreateActionSpace(this.session, actionSpace, pp);
-            logError(error, "xrCreateActionSpace", "grip: /user/hand/right");
+            checkResult(error, "xrCreateActionSpace");
             this.gripSpace[RIGHT_CONTROLLER] = new XrSpace(pp.get(0), this.session);
 
             actionSpace.action(new XrAction(this.grip[LEFT_CONTROLLER], actionSet));
             actionSpace.subactionPath(getPath("/user/hand/left"));
             error = XR10.xrCreateActionSpace(this.session, actionSpace, pp);
-            logError(error, "xrCreateActionSpace", "grip: /user/hand/left");
+            checkResult(error, "xrCreateActionSpace");
             this.gripSpace[LEFT_CONTROLLER] = new XrSpace(pp.get(0), this.session);
 
             actionSpace.action(new XrAction(this.aim[RIGHT_CONTROLLER], actionSet));
             actionSpace.subactionPath(getPath("/user/hand/right"));
             error = XR10.xrCreateActionSpace(session, actionSpace, pp);
-            logError(error, "xrCreateActionSpace", "aim: /user/hand/right");
+            checkResult(error, "xrCreateActionSpace");
             this.aimSpace[RIGHT_CONTROLLER] = new XrSpace(pp.get(0), this.session);
 
             actionSpace.action(new XrAction(this.aim[LEFT_CONTROLLER], actionSet));
             actionSpace.subactionPath(getPath("/user/hand/left"));
             error = XR10.xrCreateActionSpace(this.session, actionSpace, pp);
-            logError(error, "xrCreateActionSpace", "aim: /user/hand/left");
+            checkResult(error, "xrCreateActionSpace");
             this.aimSpace[LEFT_CONTROLLER] = new XrSpace(pp.get(0), this.session);
         }
     }
@@ -1296,7 +1380,7 @@ public class MCOpenXR extends MCVR {
             XrActionCreateInfo hands = XrActionCreateInfo.calloc(stack);
             hands.type(XR10.XR_TYPE_ACTION_CREATE_INFO);
             hands.next(NULL);
-            hands.actionName(memUTF8(s));
+            hands.actionName(stack.UTF8(s));
             switch (type) {
                 case "boolean" -> hands.actionType(XR10.XR_ACTION_TYPE_BOOLEAN_INPUT);
                 case "vector1" -> hands.actionType(XR10.XR_ACTION_TYPE_FLOAT_INPUT);
@@ -1315,7 +1399,7 @@ public class MCOpenXR extends MCVR {
                 hands.countSubactionPaths(0);
                 hands.subactionPaths(null);
             }
-            hands.localizedActionName(memUTF8(s));
+            hands.localizedActionName(stack.UTF8(s));
             PointerBuffer buffer = stackCallocPointer(1);
 
             int error = XR10.xrCreateAction(actionSet, hands, buffer);
@@ -1329,13 +1413,13 @@ public class MCOpenXR extends MCVR {
             XrActionSetCreateInfo info = XrActionSetCreateInfo.calloc(stack);
             info.type(XR10.XR_TYPE_ACTION_SET_CREATE_INFO);
             info.next(NULL);
-            info.actionSetName(memUTF8(localisedName.toLowerCase()));
-            info.localizedActionSetName(memUTF8(localisedName.toLowerCase()));
+            info.actionSetName(stack.UTF8(localisedName.toLowerCase(Locale.ROOT)));
+            info.localizedActionSetName(stack.UTF8(localisedName.toLowerCase(Locale.ROOT)));
             info.priority(priority);
             PointerBuffer buffer = stack.callocPointer(1);
 
             int error = XR10.xrCreateActionSet(instance, info, buffer);
-            logError(error, "makeActionSet", localisedName.toLowerCase());
+            checkResult(error, "xrCreateActionSet (" + name + ")");
             return buffer.get(0);
         }
     }

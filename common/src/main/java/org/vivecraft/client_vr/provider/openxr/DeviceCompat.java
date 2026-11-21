@@ -23,9 +23,9 @@ import static org.lwjgl.system.MemoryStack.stackInts;
 import static org.lwjgl.system.MemoryUtil.NULL;
 
 public interface DeviceCompat {
-    long getPlatformInfo(MemoryStack stack);
+    default void initializeLoader(MemoryStack stack) {}
 
-    void initOpenXRLoader(MemoryStack stack);
+    long instancePlatformInfo(MemoryStack stack);
 
     String getGraphicsExtension();
 
@@ -44,13 +44,9 @@ public interface DeviceCompat {
 
     class Desktop implements DeviceCompat {
         @Override
-        public long getPlatformInfo(MemoryStack stack) {
-            return NULL;
-        }
-
-        @Override
-        public void initOpenXRLoader(MemoryStack stack) {
+        public long instancePlatformInfo(MemoryStack stack) {
             VRSettings.LOGGER.info("Platform: {}", System.getProperty("os.version"));
+            return NULL;
         }
 
         @Override
@@ -113,39 +109,57 @@ public interface DeviceCompat {
     }
 
     class Mobile implements DeviceCompat {
-        @Override
-        public long getPlatformInfo(MemoryStack stack) {
-            return XrInstanceCreateInfoAndroidKHR.calloc(stack).set(
-                KHRAndroidCreateInstance.XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR,
-                NULL,
-                VLoader.getDalvikVM(),
-                VLoader.getDalvikActivity()
-            ).address();
+        private static boolean loaderReady;
+        private static boolean applicationLoader;
+
+        static synchronized boolean initializeApplicationLoader(MemoryStack stack) {
+            if (loaderReady) return applicationLoader;
+            long context;
+            try {
+                context = VLoader.getDalvikApplicationContext();
+            } catch (UnsatisfiedLinkError olderLauncher) {
+                return false;
+            }
+            if (context == NULL) throw new IllegalStateException("FCL returned no Android Application context");
+            initializeAndroidLoader(stack, context);
+            applicationLoader = true;
+            return true;
+        }
+
+        private static void initializeAndroidLoader(MemoryStack stack, long context) {
+            long vm = VLoader.getDalvikVM();
+            if (vm == NULL || context == NULL) throw new IllegalStateException("Missing Android OpenXR loader context");
+            var info = XrLoaderInitInfoAndroidKHR.calloc(stack).set(
+                KHRLoaderInitAndroid.XR_TYPE_LOADER_INIT_INFO_ANDROID_KHR, NULL, vm, context);
+            MCOpenXR.checkResult(KHRLoaderInit.xrInitializeLoaderKHR(
+                XrLoaderInitInfoBaseHeaderKHR.create(info.address())), "xrInitializeLoaderKHR");
+            loaderReady = true;
         }
 
         @Override
-        public void initOpenXRLoader(MemoryStack stack) {
-            VRSettings.LOGGER.info("Platform: {}", System.getProperty("os.version"));
-            VLoader.setupAndroid();
-
-            try {
-                Thread.sleep(2500);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException("Interrupted while starting QuestCraft OpenXR", e);
+        public void initializeLoader(MemoryStack stack) {
+            synchronized (Mobile.class) {
+                if (loaderReady || initializeApplicationLoader(stack)) return;
+                VLoader.setupAndroid();
+                initializeAndroidLoader(stack, requestActivity());
             }
-            if (VLoader.getDalvikVM() == NULL || VLoader.getDalvikActivity() == NULL) {
-                throw new IllegalStateException("QuestCraft vloader did not supply the Android VM/activity");
-            }
-            XrLoaderInitInfoAndroidKHR initInfo = XrLoaderInitInfoAndroidKHR.calloc(stack).set(
-                KHRLoaderInitAndroid.XR_TYPE_LOADER_INIT_INFO_ANDROID_KHR,
-                NULL,
-                VLoader.getDalvikVM(),
-                VLoader.getDalvikActivity()
-            );
+        }
 
-            MCOpenXR.checkResult(KHRLoaderInit.xrInitializeLoaderKHR(
-                XrLoaderInitInfoBaseHeaderKHR.create(initInfo.address())), "xrInitializeLoaderKHR");
+        private static long requestActivity() {
+            long started = System.nanoTime();
+            VRSettings.LOGGER.info("Vivecraft: requesting immersive Activity for OpenXR");
+            long activity = VLoader.getDalvikActivity();
+            if (activity == NULL) throw new IllegalStateException("FCL returned no immersive Activity");
+            VRSettings.LOGGER.info("Vivecraft: immersive Activity resumed after {} ms",
+                (System.nanoTime() - started) / 1_000_000);
+            return activity;
+        }
+
+        @Override
+        public long instancePlatformInfo(MemoryStack stack) {
+            return XrInstanceCreateInfoAndroidKHR.calloc(stack).set(
+                KHRAndroidCreateInstance.XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR, NULL,
+                VLoader.getDalvikVM(), requestActivity()).address();
         }
 
         @Override

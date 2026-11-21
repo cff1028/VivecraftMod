@@ -1,6 +1,7 @@
 package org.vivecraft.client_vr;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.ConfirmScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import org.apache.commons.lang3.StringUtils;
@@ -16,6 +17,7 @@ import org.vivecraft.client_vr.provider.nullvr.NullVR;
 import org.vivecraft.client_vr.provider.openvr_lwjgl.MCOpenVR;
 import org.vivecraft.client_vr.provider.openxr.DeviceCompat;
 import org.vivecraft.client_vr.provider.openxr.MCOpenXR;
+import org.vivecraft.client_vr.provider.openxr.QuestVulkanContext;
 import org.vivecraft.client_vr.render.RenderConfigException;
 import org.vivecraft.client_vr.render.VRShaders;
 import org.vivecraft.client_vr.settings.VRSettings;
@@ -50,7 +52,7 @@ public class VRState {
     private static boolean FRAME_DELAY = false;
 
     public static void initializeVR() {
-        if (VR_INITIALIZED) {
+        if (VR_INITIALIZED || QuestVulkanContext.waitingForResources()) {
             return;
         }
         if (!FRAME_DELAY) {
@@ -69,11 +71,20 @@ public class VRState {
             if (dh.vrSettings.stereoProviderPluginID == VRSettings.VRProvider.OPENVR) {
                 dh.vr = new MCOpenVR(Minecraft.getInstance(), dh);
             } else if (dh.vrSettings.stereoProviderPluginID == VRSettings.VRProvider.OPENXR) {
+                if (QuestVulkanContext.needsRestartForVR()) {
+                    promptVulkanRestart(dh.vrSettings);
+                    return;
+                }
                 dh.vr = new MCOpenXR(Minecraft.getInstance(), dh);
             } else {
                 dh.vr = new NullVR(Minecraft.getInstance(), dh);
             }
             if (!dh.vr.init()) {
+                if (dh.vr instanceof MCOpenXR && QuestVulkanContext.needsRestartForVR()) {
+                    destroyVR(true);
+                    promptVulkanRestart(dh.vrSettings);
+                    return;
+                }
                 throw new RenderConfigException(Component.translatable("vivecraft.messages.vriniterror"),
                     Component.translatable("vivecraft.messages.rendersetupfailed", dh.vr.initStatus, dh.vr.getName()));
             }
@@ -161,12 +172,39 @@ public class VRState {
         ClientDataHolderVR.getInstance().cachedScreen = screen;
     }
 
+    private static void promptVulkanRestart(VRSettings settings) {
+        Minecraft mc = Minecraft.getInstance();
+        Screen previous = mc.gui.screen();
+        VR_ENABLED = false;
+        FRAME_DELAY = false;
+        settings.vrEnabled = false;
+        settings.saveOptions();
+        mc.gui.setScreen(new ConfirmScreen(quit -> {
+            if (quit) {
+                settings.vrEnabled = true;
+                settings.rememberVr = true;
+                settings.saveOptions();
+                mc.stop();
+            } else {
+                mc.gui.setScreen(previous);
+            }
+        }, Component.translatable("vivecraft.messages.vulkanrestart.title"),
+            Component.translatable("vivecraft.messages.vulkanrestart.description"),
+            Component.translatable("vivecraft.messages.vulkanrestart.quit"),
+            Component.translatable("gui.cancel")));
+    }
+
     public static void destroyVR(boolean disableVRSetting) {
         ClientDataHolderVR dh = ClientDataHolderVR.getInstance();
         // Release image wrappers before destroying the OpenXR swapchain.
         if (dh.vr instanceof MCOpenXR && dh.vrRenderer != null) {
-            dh.vrRenderer.destroy();
-            dh.vrRenderer = null;
+            try {
+                dh.vrRenderer.destroy();
+            } catch (RuntimeException failure) {
+                VRSettings.LOGGER.warn("Vivecraft: failed to release OpenXR render targets", failure);
+            } finally {
+                dh.vrRenderer = null;
+            }
         }
         if (dh.vr != null) {
             dh.vr.destroy();

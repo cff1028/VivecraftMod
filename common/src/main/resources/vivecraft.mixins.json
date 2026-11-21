@@ -4,6 +4,12 @@
   "plugin": "org.vivecraft.MixinConfig",
   "compatibilityLevel": "JAVA_17",
   "client": [
+    "client_vr.questvulkan.BackendMixin",
+    "client_vr.questvulkan.DeviceSurfaceMixin",
+    "client_vr.questvulkan.InstanceExtensionsMixin",
+    "client_vr.questvulkan.PhysicalDeviceMixin",
+    "client_vr.questvulkan.PanelSurfaceMixin",
+    "client_vr.questvulkan.GraphicsSelectionMixin",
     "client.OptionInstanceMixin",
     "client.ResourceLoadStateTrackerMixin",
     "client.blaze3d.BufferBuilderMixin",

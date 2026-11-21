@@ -3,13 +3,14 @@ package org.vivecraft.mixin.client_vr.blaze3d.vulkan;
 import com.llamalad7.mixinextras.sugar.Local;
 import com.mojang.blaze3d.vulkan.VulkanDevice;
 import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
-import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.vivecraft.client_vr.extensions.vulkan.VulkanDeviceExtension;
 import org.vivecraft.client_vr.extensions.vulkan.VulkanPhysicalDeviceExtension;
+import org.vivecraft.client_vr.provider.openxr.QuestVulkanContext;
 
 import java.util.Set;
 
@@ -24,6 +25,15 @@ public class VulkanDeviceVRMixin implements VulkanDeviceExtension {
         CallbackInfo ci, @Local(argsOnly = true) VulkanPhysicalDevice physicalDevice)
     {
         this.vivecraft$availableDeviceExtensions = ((VulkanPhysicalDeviceExtension) physicalDevice).vivecraft$getAvailableExtensions();
+        if (QuestVulkanContext.requested()) {
+            var queue = physicalDevice.graphicsQueueFamilyAndIndex();
+            QuestVulkanContext.gameDeviceReady(((VulkanDevice) (Object) this).vkDevice(), queue.leftInt(), queue.rightInt());
+        }
+    }
+
+    @Inject(method = "close", at = @At("HEAD"))
+    private void vivecraft$closeQuestContext(CallbackInfo ci) {
+        QuestVulkanContext.beforeDeviceClose(((VulkanDevice) (Object) this).vkDevice());
     }
 
     @Override
